@@ -15,6 +15,10 @@ public:
 	// Sets default values for this actor's properties
 	AHeightMapGenerator();
 
+	UPROPERTY(BlueprintReadWrite, Category = "Base Settings")
+	int Size;
+	
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
