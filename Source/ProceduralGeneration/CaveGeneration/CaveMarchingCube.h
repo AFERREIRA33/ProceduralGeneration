@@ -13,6 +13,34 @@ struct FMeshData
 	TArray<FVector> Normals;
 	TArray<FColor> Colors;
 	TArray<FVector2D> UV0;
+	void Clear();
+};
+
+inline void FMeshData::Clear()
+{
+	Vertices.Empty();
+	Triangles.Empty();
+	Normals.Empty();
+	Colors.Empty();
+	UV0.Empty();
+}
+
+struct FThreadMeshData
+{
+	TArray<FVector> Vertices;
+	TArray<int32> Triangles;
+	TArray<FVector> Normals;
+	TArray<FColor> Colors;
+	int32 VertexCount = 0;
+
+	void Reset()
+	{
+		Vertices.Reset();
+		Triangles.Reset();
+		Normals.Reset();
+		Colors.Reset();
+		VertexCount = 0;
+	}
 };
 
 class FastNoiseLite;
@@ -29,6 +57,7 @@ public:
 	~ACaveMarchingCube();
 
 	float frequency;
+	float surfaceLevel;
 	TObjectPtr<UMaterialInterface> material;
 	int size;
 
@@ -39,7 +68,7 @@ protected:
 
 	void Setup();
 	void GenerateHeightMap(const FVector position);
-	void GenerateMesh();
+	void GenerateMesh(int zStart, int zEnd,FThreadMeshData& data);
 	FastNoiseLite* noise;
 	FMeshData meshData;
 	int vertexCount = 0;
@@ -48,10 +77,10 @@ protected:
 private:
 	TArray<float> Voxels;
 	int TriangleOrder[3] = {0, 1, 2};
-	float surfaceLevel = 0.0f;
+
 	
 	void ApplyMesh() const;
-	void CaveMarch(int X, int Y, int Z, const float cube[8]);
+	void CaveMarch(int X, int Y, int Z, const float cube[8], FThreadMeshData& data);
 	int GetVoxelIndex(int X, int Y, int Z) const;
 	float Interpolation(float V1, float V2) const;
 	
