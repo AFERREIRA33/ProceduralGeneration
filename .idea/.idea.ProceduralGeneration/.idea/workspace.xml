@@ -12,15 +12,79 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e338c2cf-385c-4261-978a-a138b3c4c1d9" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/encodings.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/encodings.xml" afterDir="false" />
+    <list default="true" id="b1151afd-6359-4b3a-b885-f466489d3b9f" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/vcs.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/ProceduralGeneration.Build.cs" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/ProceduralGeneration.Build.cs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/CaveGeneration/BP_GenerateCave.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/5K/PCVZLP44S6FF1150VY4QCV.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/DE/KZX2KF4S7VJWEJY824B3Q3.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/HL/LB4YL3LHKTGEPYWD97G5EO.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/N9/M69XA6QDHD5ZCOEX0JY12W.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/OU/6M8SA0JXACFHINIHLG5DPW.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/SL/CNW9GJRDAE83E8LTKKY1GH.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/T8/TM1HX7B3X3BBX4X7FUQK1E.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/YF/HM1NP12DDVBEVK8QRQ2D76.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/0/ZW/SNCN9W7LLAI2ZJESRQQOZT.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/1/6J/ZIKOCII7QVRC9TC9XSYAL0.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/1/DN/6I8NUH72QMXUEY05PGNAYM.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/2/8R/DSEAU4QORG43WZUE7ODXO7.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/2/M0/0LRA80JOSMXRIYJ1NYHUI0.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/2/RV/BYIB7KUVIHDVZRO8WVEU79.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/3/08/KPLHHB3NKWP4S3ZILDR8XK.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/3/9D/1TX7JGKFRBQJ4GSCSXX4VL.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/3/IK/ZNBSZ2QQ3SBE8VN5C0H33D.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/3/MU/8370UY9GCKQL0HE8YKH0P1.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/3/R1/QYL4CP8M3ITSK2PPOAANIZ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/4/U9/40JUZ4VFWSKFS2Q7AGY8SH.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/4/ZT/7SGMNLRT98BR81AHEH2ODM.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/5/OA/Z9X9SIHF1OWU6IU5JF6WLQ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/6/GH/Q9Z9H8VCMGLD546NEER7O2.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/6/O2/2ODAK4QRQGS8PY5M5JOU8R.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/6/O9/WFN58ODS8T2IG346PS1DZZ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/6/VP/BFTB4RCHNJ49KNU759FYWF.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/7/3S/CQAT7U9XMI3MNGZ2DHE0DD.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/7/55/1MW9NM7LEXALBJ638LLH4Z.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/7/GW/GJYBT68R06KJ4XPKO1LAYM.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/7/SO/XO5715WG1EJKLKXOW23DMC.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/7/Z4/LAZWAFGTK0A0B0Y4B0APXF.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/D7/JGUQQV4O9A66I4G9BDHQWP.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/KJ/0H0XYFLPK3WCE814Q38ZNV.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/Q4/7IAEODIETENXU6MPT22ZF6.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/S4/HBXEM8BA9J53RKFS9UVLL7.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/UF/0PLQ8EISRL3D3QHSKNGQ71.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/8/Y2/61GAN99OO9XJPWO51RHHGO.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/9/03/CAJRS3YZRAM2C3PL8LQBJP.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/9/3C/NOS7BU8LYSQ2MFSJ2251NS.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/9/5V/K28W0G14J2QZR0PEX9758B.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/9/LP/65O5TMZC50UY9SHTUGXWXJ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/A/3N/QKLQGLCMAR5GFT307ECJWY.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/A/GE/FK25UFBGSI1TAY76Q3ZQNC.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/A/MG/WP78MA4589LIDRISZXOPVZ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/A/N7/GKJ6XCS4WMZUQJVOSIXU3K.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/A/OV/9J46SGMFRE1LNIZPDU4NR2.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/B/5O/98GD6E1VUQFDGBRD3HCDS3.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/B/8G/GKPE8M2IXGIABI9GGD5I4P.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/B/GD/K2IYKV9G7327MTZW84OCWT.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/B/OM/B1YNY6U0AVG4UB257W095F.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/B/TW/1LQ4MMRWAE4WZD42YP83P6.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/C/FG/I8DRCURCQSFMDATXPVIR1L.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/C/ID/M86I5KPP9GO6HPK9R46S3C.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/C/M4/VZFYI5QN7B2016IUQ3UO3Y.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/C/O0/AIL0S2J7GSWIPMR2E74VLS.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/C/XB/82QASIH87CCVSD6JAR5G8G.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/1D/LVYC4OMAG6XZA5ERXUYGIR.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/2Y/ZW9UISU9LK53EXT9MOINMD.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/88/6GDM9VFGIVEPCBMZ5IJN7L.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/HT/DIXHXH0ZU809EW8JN1B9GF.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/LS/9IPWV9C637PM2IMW7XC3EL.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/PM/GZMK7CHM87LYO4D7J266FZ.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/D/PU/SPRRMDZKAS7RST3VX8J2D7.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/E/93/5T6U7SUFSRBJBRHL1XES9I.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/F/0B/KYI2GHJ4DCMV9JNEUDBNP0.uasset" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/GenerateCave.h" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -34,32 +98,36 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://0" root0="FORCE_HIGHLIGHTING" />
+    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
+    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://6" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/../../../../../Program Files/Epic Games/UE_5.6/Engine/Source/Runtime/CoreUObject/Private/UObject/UObjectArchetype.cpp" root0="FORCE_HIGHLIGHTING" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "customColor": "",
-  "associatedIndex": 6
-}]]></component>
-  <component name="ProjectId" id="35NblFo8U9jb9EDBM67YU5aRcAM" />
+  <component name="MetaFilesCheckinStateConfiguration" checkMetaFiles="true" />
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 6
+}</component>
+  <component name="ProjectId" id="36L1aMktxSSIsK5gRk18pwQS7U5" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "C/C++ Project.ProceduralGeneration.executor": "Debug",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "CaveGeneration",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;C/C++ Project.ProceduralGeneration.executor&quot;: &quot;Debug&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;CaveGeneration&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager" selected="C/C++ Project.ProceduralGeneration">
     <configuration name="ProceduralGeneration" type="CppProject" factoryName="C++ Project">
       <configuration_1 setup="1">
@@ -162,24 +230,30 @@
       <method v="2" />
     </configuration>
     <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
-      <deployment type="dockerfile" />
+      <deployment type="dockerfile">
+        <settings />
+      </deployment>
+      <EXTENSION ID="com.jetbrains.rider.docker.debug" isFastModeEnabled="true" isSslEnabled="false" />
       <method v="2" />
     </configuration>
   </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
-      <changelist id="e338c2cf-385c-4261-978a-a138b3c4c1d9" name="Changes" comment="" />
-      <created>1762953626574</created>
+      <changelist id="b1151afd-6359-4b3a-b885-f466489d3b9f" name="Changes" comment="" />
+      <created>1764771100827</created>
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
-      <updated>1762953626574</updated>
-      <workItem from="1762953628490" duration="3007000" />
+      <updated>1764771100827</updated>
+      <workItem from="1764771102866" duration="4758000" />
+      <workItem from="1767686759811" duration="12327000" />
+      <workItem from="1767773982953" duration="9837000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
   </component>
+  <component name="UnityCheckinConfiguration" checkUnsavedScenes="true" />
   <component name="UnityProjectConfiguration" hasMinimizedUI="false" />
   <component name="VcsManagerConfiguration">
     <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />

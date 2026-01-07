@@ -1,303 +1,206 @@
 ﻿#include "CaveMarchingCube.h"
-#include "ProceduralGeneration/Utils/FastNoiseLite.h"
 #include "ProceduralMeshComponent.h"
+
+
 
 
 // Sets default values
 ACaveMarchingCube::ACaveMarchingCube()
 {
-	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
+	PrimaryActorTick.bCanEverTick = false;
 	mesh = CreateDefaultSubobject<UProceduralMeshComponent>("Mesh");
-	noise = new FastNoiseLite();
-
-	mesh->SetCastShadow(false);
-
-	// Set Mesh as root
 	SetRootComponent(mesh);
+	noise = new FastNoiseLite();
+	noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	
 }
 
-ACaveMarchingCube::~ACaveMarchingCube()
-{
-	delete noise;
-}
 
 // Called when the game starts or when spawned
 void ACaveMarchingCube::BeginPlay()
 {
-
 	Super::BeginPlay();
-	noise->SetFrequency(frequency);
-	noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-	noise->SetFractalType(FastNoiseLite::FractalType_FBm);
-
-	Setup();
-
-	FVector Position = GetActorLocation() / 100;
-
-	Async(EAsyncExecution::ThreadPool, [this, Position]()
-	{
-		// Step 1: Generate voxel data
-		GenerateHeightMap(Position);
-
-		// Step 2: Split Z-axis into sections for parallelism
-		int sectionCount = FMath::Max(1, FPlatformMisc::NumberOfCores() / 2);
-		TArray<TFuture<FThreadMeshData>> futures;
-
-		for (int s = 0; s < sectionCount; ++s)
-		{
-			int zStart = s * size / sectionCount;
-			int zEnd = (s + 1) * size / sectionCount;
-
-			futures.Add(Async(EAsyncExecution::ThreadPool, [this, zStart, zEnd]()
-			{
-				FThreadMeshData threadData;
-				threadData.Reset();
-				GenerateMesh(zStart, zEnd, threadData);
-				return threadData;
-			}));
-		}
-
-		// Step 3: Merge results on the game thread
-		AsyncTask(ENamedThreads::GameThread, [this, futures = MoveTemp(futures)]() mutable
-		{
-			meshData.Clear();
-			vertexCount = 0;
-
-			for (int i = 0; i < futures.Num(); ++i)
-			{
-				FThreadMeshData td = futures[i].Get();
-
-				// Correct triangle indexing by offsetting
-				int32 baseVertex = meshData.Vertices.Num();
-
-				for (int32 t = 0; t < td.Triangles.Num(); ++t)
-				{
-					meshData.Triangles.Add(td.Triangles[t] + baseVertex);
-				}
-
-				meshData.Vertices.Append(td.Vertices);
-				meshData.Normals.Append(td.Normals);
-				meshData.Colors.Append(td.Colors);
-			}
-
-			vertexCount = meshData.Vertices.Num();
-
-			ApplyMesh();
-		});
-	});
+	densityGrid.Init(1.0f, gridSize * gridSize * gridSize);
+	CaveWorm();
+	GenerateMesh();
 }
 
 // Called every frame
 void ACaveMarchingCube::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	
 }
 
-void ACaveMarchingCube::Setup()
+int ACaveMarchingCube::GetIndex(int x, int y, int z)
 {
-	Voxels.SetNum((size + 1) * (size + 1) * (size + 1));
+	return x + gridSize * (y + gridSize * z);
 }
 
-void ACaveMarchingCube::GenerateHeightMap(const FVector position)
+FVector ACaveMarchingCube::VertexInterpolation(FVector p1, FVector p2, float valp1, float valp2)
 {
-	for (int x = 0; x <= size; ++x)
-	{
-		for (int y = 0; y <= size; ++y)
-		{
-			for (int z = 0; z <= size; ++z)
-			{
-				// Sample noise at this position and store as voxel density
-				Voxels[GetVoxelIndex(x,y,z)] = noise->GetNoise(
-					x + position.X, 
-					y + position.Y, 
-					z + position.Z
-				);	
-			}
-		}
-	}
-}
+	if (FMath::Abs(surfaceLevel - valp1) < 0.00001f) return p1;
+	if (FMath::Abs(surfaceLevel - valp2) < 0.00001f) return p1;
+	if (FMath::Abs(valp1 - valp2) < 0.00001f) return p1;
 
-void ACaveMarchingCube::GenerateMesh(int zStart, int zEnd,FThreadMeshData& data)
-{
-	if (surfaceLevel > 0.0f)
-	{
-		TriangleOrder[0] = 0;
-		TriangleOrder[1] = 1;
-		TriangleOrder[2] = 2;
-	}
-	else
-	{
-		TriangleOrder[0] = 2;
-		TriangleOrder[1] = 1;
-		TriangleOrder[2] = 0;
-	}
-	float Cube[8];
-	for (int X = 0; X < size; ++X)
-	{
-		for (int Y = 0; Y < size; ++Y)
-		{
-			for (int Z = zStart; Z < zEnd; ++Z)
-			{
-				for (int i = 0; i < 8; ++i)
-				{
-					Cube[i] = Voxels[GetVoxelIndex(
-						X + VertexOffset[i][0],
-						Y + VertexOffset[i][1],
-						Z + VertexOffset[i][2]
-					)];
-				}
-				CaveMarch(X, Y, Z, Cube,data);
-			}
-		}
-	}
+	float Mu = (surfaceLevel - valp1) / (valp2 - valp1);
+    
+	// Linear interpolation between P1 and P2
+	return p1 + (p2 - p1) * Mu;
 }
 
 
 
-void ACaveMarchingCube::CaveMarch(int X, int Y, int Z, const float cube[8], FThreadMeshData& data)
+void ACaveMarchingCube::CaveWorm()
 {
-	int VertexMask = 0;
-	FVector EdgeVertex[12];
+	FVector currentPos = FVector(gridSize / 2, gridSize / 2, gridSize - 5); 
+    
+  
+    noise->SetFrequency(wormNoiseFrequency);
 
-	for (int i = 0; i < 8; ++i)
-		if (cube[i] <= surfaceLevel) VertexMask |= 1 << i; // Problem with mesh if noise not perlin need >= but thane perlin have problem
-
-	const int EdgeMask = CubeEdgeFlags[VertexMask];
-	if (EdgeMask == 0) return;
-
-	// Compute intersection points
-	for (int i = 0; i < 12; ++i)
-	{
-		if ((EdgeMask & (1 << i)) != 0)
-		{
-			float offset = Interpolation(cube[EdgeConnection[i][0]], cube[EdgeConnection[i][1]]);
-			EdgeVertex[i].X = X + VertexOffset[EdgeConnection[i][0]][0] + offset * EdgeDirection[i][0];
-			EdgeVertex[i].Y = Y + VertexOffset[EdgeConnection[i][0]][1] + offset * EdgeDirection[i][1];
-			EdgeVertex[i].Z = Z + VertexOffset[EdgeConnection[i][0]][2] + offset * EdgeDirection[i][2];
-		}
-	}
-
-	for (int i = 0; i < 5; ++i)
-	{
-		if (TriangleConnectionTable[VertexMask][3*i] < 0) break;
-
-		auto V1 = EdgeVertex[TriangleConnectionTable[VertexMask][3*i]] * 100;
-		auto V2 = EdgeVertex[TriangleConnectionTable[VertexMask][3*i + 1]] * 100;
-		auto V3 = EdgeVertex[TriangleConnectionTable[VertexMask][3*i + 2]] * 100;
-
-		auto Normal = FVector::CrossProduct(V2 - V1, V3 - V1);
-		if (!Normal.Normalize()) Normal = FVector::UpVector;
-		Normal.Normalize();
-		auto Color = FColor::MakeRandomColor();
-
-		data.Vertices.Append({V1, V2, V3});
-		data.Triangles.Append({ data.VertexCount + TriangleOrder[0],
-								data.VertexCount + TriangleOrder[1],
-								data.VertexCount + TriangleOrder[2] });
-		data.Normals.Append({Normal, Normal, Normal});
-		data.Colors.Append({Color, Color, Color});
-		data.VertexCount += 3;
-	}
-}
-
-
-void ACaveMarchingCube::ApplyMesh() const
-{
-	TMap<FIntVector, int32> vertexLookup;
-
-    // You can tune this based on your scale (smaller = stricter merging)
-    const float precision = 0.1f; 
-
-    // Prepare new arrays
-    TArray<FVector> finalVertices;
-    TArray<FVector> finalNormals;
-    TArray<FColor>  finalColors;
-    TArray<int32>   finalTriangles;
-
-    auto Quantize = [&](const FVector& v)
+    for (int step = 0; step < wormSteps; step++)
     {
-        return FIntVector(
-            FMath::RoundToInt(v.X / precision),
-            FMath::RoundToInt(v.Y / precision),
-            FMath::RoundToInt(v.Z / precision)
-        );
-    };
+  
+        float dirX = noise->GetNoise((float)step, 0.0f);
+        float dirY = noise->GetNoise((float)step, 100.0f);
+        float dirZ = noise->GetNoise((float)step, 200.0f) - 0.5f; 
 
-    // Returns existing vertex index or creates a new one
-    auto GetOrAddVertex = [&](const FVector& v, const FVector& n, const FColor& c)
-    {
-        FIntVector key = Quantize(v);
-        if (int32* existingIndex = vertexLookup.Find(key))
+        FVector direction = FVector(dirX, dirY, dirZ).GetSafeNormal();
+        currentPos += direction * (wormRadius * 0.5f); 
+
+    
+        int RadiusInt = FMath::CeilToInt(wormRadius + 2);
+        
+
+        for (int z = -RadiusInt; z <= RadiusInt; z++)
         {
-            // Accumulate normals for smooth shading
-            finalNormals[*existingIndex] += n;
-            return *existingIndex;
-        }
+            for (int y = -RadiusInt; y <= RadiusInt; y++)
+            {
+                for (int x = -RadiusInt; x <= RadiusInt; x++)
+                {
+                    FVector VoxelOffset(x, y, z);
+                    FVector targetVoxel = currentPos + VoxelOffset;
 
-        int32 newIndex = finalVertices.Num();
-        vertexLookup.Add(key, newIndex);
-        finalVertices.Add(v);
-        finalNormals.Add(n);
-        finalColors.Add(c);
-        return newIndex;
+
+                    if (targetVoxel.X > 0 && targetVoxel.X < gridSize - 1 &&
+                        targetVoxel.Y > 0 && targetVoxel.Y < gridSize - 1 &&
+                        targetVoxel.Z > 0 && targetVoxel.Z < gridSize - 1)
+                    {
+                        float Dist = FVector::Dist(currentPos, targetVoxel);
+                        
+
+                        if (Dist < wormRadius)
+                        {
+                            int index = GetIndex(targetVoxel.X, targetVoxel.Y, targetVoxel.Z);
+
+                            densityGrid[index] = FMath::Min(densityGrid[index], -1.0f); 
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void ACaveMarchingCube::GenerateMesh()
+{
+	TArray<FVector> vertices;
+	TArray<int32> triangles;
+	TArray<FVector> normals;
+	TArray<FVector2D> UVs;
+	TArray<FProcMeshTangent> tangents;
+
+
+	const FVector CornerOffsets[8] = {
+        FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0),
+        FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)
     };
 
-    // Rebuild triangles with deduplication
-    for (int32 i = 0; i < meshData.Triangles.Num(); i += 3)
+    // Main Grid Loop
+    for (int32 z = 0; z < gridSize - 1; z++)
     {
-        const FVector& V1 = meshData.Vertices[meshData.Triangles[i]];
-        const FVector& V2 = meshData.Vertices[meshData.Triangles[i + 1]];
-        const FVector& V3 = meshData.Vertices[meshData.Triangles[i + 2]];
+        for (int32 y = 0; y < gridSize - 1; y++)
+        {
+            for (int32 x = 0; x < gridSize - 1; x++)
+            {
+                // 1. Calculate the Cube Index
+                // This determines which of the 8 corners are inside the "ground" vs "air"
+                int32 CubeIndex = 0;
+                float CubeValues[8];
+                FVector GridPos(x, y, z);
 
-        const FVector& N1 = meshData.Normals[meshData.Triangles[i]];
-        const FVector& N2 = meshData.Normals[meshData.Triangles[i + 1]];
-        const FVector& N3 = meshData.Normals[meshData.Triangles[i + 2]];
+                for (int i = 0; i < 8; i++)
+                {
+                    FVector CornerPos = GridPos + CornerOffsets[i];
+                    // Get density from your grid array
+                    float Density = densityGrid[GetIndex(CornerPos.X, CornerPos.Y, CornerPos.Z)];
+                    CubeValues[i] = Density;
 
-        const FColor& C1 = meshData.Colors[meshData.Triangles[i]];
-        const FColor& C2 = meshData.Colors[meshData.Triangles[i + 1]];
-        const FColor& C3 = meshData.Colors[meshData.Triangles[i + 2]];
+                    // If density is below surface level (solid), toggle the bit
+                    // Note: Depending on your logic, < Surface might be solid or air. 
+                    // Usually: Density > SurfaceLevel = Solid.
+                    if (Density < surfaceLevel) 
+                        CubeIndex |= (1 << i);
+                }
 
-        int32 i1 = GetOrAddVertex(V1, N1, C1);
-        int32 i2 = GetOrAddVertex(V2, N2, C2);
-        int32 i3 = GetOrAddVertex(V3, N3, C3);
+                // 2. Look up Edge Table
+                // If the cube is entirely inside or entirely outside, CubeIndex is 0 or 255.
+                // The edge table tells us which edges intersect the surface.
+                if (edgeTable[CubeIndex] == 0) continue;
 
-        finalTriangles.Append({ i1, i2, i3 });
+                // 3. Calculate Intersection Points
+                // There are 12 possible edges on a cube. We compute the vertex on the required edges.
+                FVector intersectVerts[12];
+
+                // Check standard MC Edge list (0->1, 1->2, etc.)
+                if (edgeTable[CubeIndex] & 1)    intersectVerts[0]  = VertexInterpolation(GridPos + CornerOffsets[0], GridPos + CornerOffsets[1], CubeValues[0], CubeValues[1]);
+                if (edgeTable[CubeIndex] & 2)    intersectVerts[1]  = VertexInterpolation(GridPos + CornerOffsets[1], GridPos + CornerOffsets[2], CubeValues[1], CubeValues[2]);
+                if (edgeTable[CubeIndex] & 4)    intersectVerts[2]  = VertexInterpolation(GridPos + CornerOffsets[2], GridPos + CornerOffsets[3], CubeValues[2], CubeValues[3]);
+                if (edgeTable[CubeIndex] & 8)    intersectVerts[3]  = VertexInterpolation(GridPos + CornerOffsets[3], GridPos + CornerOffsets[0], CubeValues[3], CubeValues[0]);
+                if (edgeTable[CubeIndex] & 16)   intersectVerts[4]  = VertexInterpolation(GridPos + CornerOffsets[4], GridPos + CornerOffsets[5], CubeValues[4], CubeValues[5]);
+                if (edgeTable[CubeIndex] & 32)   intersectVerts[5]  = VertexInterpolation(GridPos + CornerOffsets[5], GridPos + CornerOffsets[6], CubeValues[5], CubeValues[6]);
+                if (edgeTable[CubeIndex] & 64)   intersectVerts[6]  = VertexInterpolation(GridPos + CornerOffsets[6], GridPos + CornerOffsets[7], CubeValues[6], CubeValues[7]);
+                if (edgeTable[CubeIndex] & 128)  intersectVerts[7]  = VertexInterpolation(GridPos + CornerOffsets[7], GridPos + CornerOffsets[4], CubeValues[7], CubeValues[4]);
+                if (edgeTable[CubeIndex] & 256)  intersectVerts[8]  = VertexInterpolation(GridPos + CornerOffsets[0], GridPos + CornerOffsets[4], CubeValues[0], CubeValues[4]);
+                if (edgeTable[CubeIndex] & 512)  intersectVerts[9]  = VertexInterpolation(GridPos + CornerOffsets[1], GridPos + CornerOffsets[5], CubeValues[1], CubeValues[5]);
+                if (edgeTable[CubeIndex] & 1024) intersectVerts[10] = VertexInterpolation(GridPos + CornerOffsets[2], GridPos + CornerOffsets[6], CubeValues[2], CubeValues[6]);
+                if (edgeTable[CubeIndex] & 2048) intersectVerts[11] = VertexInterpolation(GridPos + CornerOffsets[3], GridPos + CornerOffsets[7], CubeValues[3], CubeValues[7]);
+
+                // 4. Create Triangles from TriTable
+                // The TriTable gives us indices (0-15) to look up in our IntersectVerts array
+                // The table is terminated by -1
+                for (int i = 0; triTable[CubeIndex][i] != -1; i += 3)
+                {
+                    // Scale vertex by VoxelSize to fit world space
+                    FVector V1 = intersectVerts[triTable[CubeIndex][i]]     * voxelSize;
+                    FVector V2 = intersectVerts[triTable[CubeIndex][i + 1]] * voxelSize;
+                    FVector V3 = intersectVerts[triTable[CubeIndex][i + 2]] * voxelSize;
+
+                    // Add to Vertex Array
+                    int Index1 = vertices.Add(V1);
+                    int Index2 = vertices.Add(V2);
+                    int Index3 = vertices.Add(V3);
+
+                    // Add Triangle Indices (winding order matters for visibility)
+                	triangles.Add(Index3);
+                	triangles.Add(Index2);
+                    triangles.Add(Index1);
+
+                    
+                    // Simple UV Mapping (planar projection from top)
+                    UVs.Add(FVector2D(V1.X, V1.Y) / 512.0f);
+                    UVs.Add(FVector2D(V2.X, V2.Y) / 512.0f);
+                    UVs.Add(FVector2D(V3.X, V3.Y) / 512.0f);
+                }
+            }
+        }
     }
-
-    // Normalize accumulated normals
-    for (FVector& N : finalNormals)
-    {
-        N.Normalize();
-    }
-
-    // Finally, create the mesh section
-    mesh->SetMaterial(0, material);
-    mesh->CreateMeshSection(
-        0,
-        finalVertices,
-        finalTriangles,
-        finalNormals,
-        meshData.UV0,     // empty, unless you generate UVs
-        finalColors,
-        TArray<FProcMeshTangent>(),
-        true
-    );
+	// Upload to GPU
+	mesh->CreateMeshSection_LinearColor(0, vertices, triangles, normals, UVs, TArray<FLinearColor>(), tangents, true);
 }
 
-int ACaveMarchingCube::GetVoxelIndex(int X, int Y, int Z) const
-{
-	return Z * (size + 1) * (size + 1) + Y * (size + 1) + X;
-}
 
-float ACaveMarchingCube::Interpolation(float V1, float V2) const
-{
-	const float delta = V2 - V1;
-	if (fabsf(delta) < 1e-6f)
-		return 0.5f;
 
-	float t = (surfaceLevel - V1) / delta;
-	return FMath::Clamp(t, 0.0f, 1.0f);
-}
+
+
 
