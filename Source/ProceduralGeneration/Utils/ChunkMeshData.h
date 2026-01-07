@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "ChunkedDataStream.generated.h"
+#include "ChunkMeshData.generated.h"
 
 USTRUCT()
 struct FChunkMeshData
@@ -26,3 +26,20 @@ inline void FChunkMeshData::Clear()
 	Colors.Empty();
 	UV0.Empty();
 }
+
+USTRUCT()
+struct FTriangle
+{
+	GENERATED_BODY();
+public:
+	TArray<FVector> position[3];
+};
+
+USTRUCT()
+struct FGridCell
+{
+	GENERATED_BODY();
+public:
+	TArray<FVector> point[8];
+	TArray<double> value[8];
+};

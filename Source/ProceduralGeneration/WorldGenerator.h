@@ -12,6 +12,15 @@ class PROCEDURALGENERATION_API AWorldGenerator : public AActor
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditDefaultsOnly, Category="Chunk")
+	int Size = 64;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	float Frequency = 0.01f;
+	UPROPERTY(editAnywhere, BlueprintReadWrite)
+	int SurfaceLevel = 0;
+	UPROPERTY(editAnywhere, BlueprintReadWrite, Category="Chunk")
+	int MapRange = 10;
+	
 	// Sets default values for this actor's properties
 	AWorldGenerator();
 
@@ -22,4 +31,10 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+private:
+	// TQueue<AChunkBase*> chunkQueue;
+	// TArray<AChunkBase*> chunks;
+	//AChunkBase* actualChunk;
+	
+	void GenerateWorld();
 };

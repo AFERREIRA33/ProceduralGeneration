@@ -3,6 +3,9 @@
 
 #include "WorldGenerator.h"
 
+#include "Chunk/ChunkBase.h"
+#include "SurfaceGenerator/GenerateSurface.h"
+
 
 // Sets default values
 AWorldGenerator::AWorldGenerator()
@@ -15,6 +18,7 @@ AWorldGenerator::AWorldGenerator()
 void AWorldGenerator::BeginPlay()
 {
 	Super::BeginPlay();
+	GenerateWorld();
 	
 }
 
@@ -22,5 +26,21 @@ void AWorldGenerator::BeginPlay()
 void AWorldGenerator::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+}
+void AWorldGenerator::GenerateWorld()
+{
+	//TO DO: Generate Chunks based on player position
+	for (int x = 0; x < MapRange; ++x)
+	{
+		for (int y = 0; y < MapRange; ++y)
+		{
+			FVector position = FVector(x * Size*100, y * Size*100, 0.0f);
+			AGenerateSurface* chunk = GetWorld()->SpawnActor<AGenerateSurface>(position, FRotator::ZeroRotator);
+			chunk->Frequency = Frequency;
+			chunk->SurfaceLevel = SurfaceLevel;
+			chunk->Size = Size;
+			chunk->StartGeneration();
+		}
+	}
 }
 

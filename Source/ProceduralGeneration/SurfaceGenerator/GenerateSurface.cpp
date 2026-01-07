@@ -1,64 +1,37 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "GenerateSurface.h"
-#include"Utils/FastNoiseLite.h"
+#include"ProceduralGeneration/Utils/FastNoiseLite.h"
 
+#pragma optimize("", off)
 
-// Sets default values
-AGenerateSurface::AGenerateSurface()
+void AGenerateSurface::Setup()
 {
-	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = false;
-	Mesh = CreateDefaultSubobject<UProceduralMeshComponent>("Mesh");
-	Noise = new FastNoiseLite();
-
-	// Mesh Settings
-	Mesh->SetCastShadow(false);
-
-	// Set Mesh as root
-	SetRootComponent(Mesh);
-
-}
-
-
-
-
-
-
-// Called when the game starts or when spawned
-void AGenerateSurface::BeginPlay()
-{
-	Super::BeginPlay();
+	// Initialize Voxels
 	Voxels.SetNum((Size + 1) * (Size + 1) * (Size + 1));
-	Noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-	Generate2DHeightMap();
-	
 }
 
-void AGenerateSurface::Generate2DHeightMap()
+void AGenerateSurface::Generate2DHeightMap(const FVector Position)
 {
 	for (int x = 0; x <= Size; x++)
 	{
 		for (int y = 0; y <= Size; y++)
 		{
-			const float Xpos = x + GetActorLocation().X;
-			const float ypos = y + GetActorLocation().Y;
-			
+			const float Xpos = x + Position.X;
+			const float ypos = y + Position.Y;
 			const int Height = FMath::Clamp(FMath::RoundToInt((Noise->GetNoise(Xpos, ypos) + 1) * Size / 2), 0, Size);
 
-			for (int z = 0; z < Height; z++)
+			for (int z = 0; z <= Size; z++)
 			{
-				Voxels[GetVoxelIndex(x,y,z)] = 1.0f;
-			}
-
-			for (int z = Height; z < Size; z++)
-			{
-				Voxels[GetVoxelIndex(x,y,z)] = -1.0f;
+				Voxels[GetVoxelIndex(x, y, z)] = Height - z;
 			}
 		}
 	}
  }
+
+ProceduralGenerationType AGenerateSurface::SetGenerationType()
+{
+	return ProceduralGenerationType::GT_2D;
+}
 
 int AGenerateSurface::GetVoxelIndex(const int X, const int Y, const int Z) const
 {
@@ -81,8 +54,10 @@ void AGenerateSurface::GenerateMesh()
 		TriangleOrder[2] = 0;
 	}
 
-	float Cube[8];
-	
+	TArray<float> Cube = TArray<float>();
+	Cube.Init(0, 8);
+
+
 	for (int X = 0; X < Size; ++X)
 	{
 		for (int Y = 0; Y < Size; ++Y)
@@ -98,16 +73,20 @@ void AGenerateSurface::GenerateMesh()
 			}
 		}
 	}
+	UE_LOG(LogTemp, Display, TEXT("Min Value: %f"), Min);
+	UE_LOG(LogTemp, Display, TEXT("Max Value: %f"), Max);
+	
+
 }
 
 
-void AGenerateSurface::March(const int X, const int Y, const int Z, const float Cube[8])
+void AGenerateSurface::March(const int X, const int Y, const int Z, TArray<float> Cube)
 {
 	//Find which vertices are inside of the surface and which are outside
 	int VertexMask = 0;
 	for (int i = 0; i < 8; ++i)
 	{
-		if (Cube[i] <= SurfaceLevel) VertexMask |= 1 << i;
+		if (Cube[i] < SurfaceLevel) VertexMask |= 1 << i;
 	}
 
 	const int EdgeMask = CubeEdgeFlags[VertexMask];
@@ -118,11 +97,30 @@ void AGenerateSurface::March(const int X, const int Y, const int Z, const float 
 	{
 		if ((EdgeMask & 1 << i) != 0)
 		{
-			const float Offset = GetInterpolationOffset(Cube[EdgeConnection[i][0]], Cube[EdgeConnection[i][1]]);
-
-			EdgeVertex[i].X = X + (VertexOffset[EdgeConnection[i][0]][0] + Offset * EdgeDirection[i][0]);
-			EdgeVertex[i].Y = Y + (VertexOffset[EdgeConnection[i][0]][1] + Offset * EdgeDirection[i][1]);
-			EdgeVertex[i].Z = Z + (VertexOffset[EdgeConnection[i][0]][2] + Offset * EdgeDirection[i][2]);
+			int point = EdgeConnection[i][0];
+			int connectionPoint = EdgeConnection[i][1];
+			const int vertexOffP1[3] = {VertexOffset[point][0], VertexOffset[point][1], VertexOffset[point][2]};
+			const int vertexOffP2[3] = {VertexOffset[connectionPoint][0], VertexOffset[connectionPoint][1], VertexOffset[connectionPoint][2]};
+			FVector P1 = FVector(X + vertexOffP1[0],Y + vertexOffP1[1],Z + vertexOffP1[2]);
+			FVector P2 =  FVector(X + vertexOffP2[0],Y + vertexOffP2[1],Z + vertexOffP2[2]);
+			if (Min > Cube[EdgeConnection[i][0]])
+			{
+				Min = Cube[EdgeConnection[i][0]];
+			}
+			if (Min > Cube[EdgeConnection[i][1]])
+			{
+				Min = Cube[EdgeConnection[i][1]];
+			}
+			if (Max < Cube[EdgeConnection[i][0]])
+			{
+				Max = Cube[EdgeConnection[i][0]];
+			}
+			if (Max < Cube[EdgeConnection[i][1]])
+			{
+				Max = Cube[EdgeConnection[i][1]];
+			}
+			const float Delta = GetInterpolationOffset(Cube[EdgeConnection[i][0]], Cube[EdgeConnection[i][1]]);
+			EdgeVertex[i] = P1+ (P2 - P1)*Delta;
 		}
 	}
 
@@ -161,16 +159,23 @@ void AGenerateSurface::March(const int X, const int Y, const int Z, const float 
 
 		VertexCount += 3;
 	}
-
-
-
 }
 
 float AGenerateSurface::GetInterpolationOffset(const float V1, const float V2) const
 {
-	const float Delta = V2 - V1;
-	return Delta == 0.0f ? SurfaceLevel : (SurfaceLevel - V1) / Delta;
+	float PV1 = V1;
+	const float PV2 = V2;
+	const float Delta = PV2 - PV1;
+	if (FMath::IsNearlyZero(Delta))
+	{
+		return 0.5f;
+	}
+	return - PV1 / Delta;
 }
+
+#pragma optimize("", on)
+
+
 
 
 

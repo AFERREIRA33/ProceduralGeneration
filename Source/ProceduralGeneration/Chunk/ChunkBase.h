@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 
-#include "ProceduralGeneration/Utils/FChunkMeshData.h"
+#include "ProceduralGeneration/Utils/ChunkMeshData.h"
 #include "ProceduralGeneration/Utils/Enums.h"
 
 #include "ChunkBase.generated.h"
@@ -26,22 +26,26 @@ public:
 	int Size = 64;
 	
 	TObjectPtr<UMaterialInterface> Material;
-	float Frequency;
-	ProceduralGenerationType GenerationType;
-
-	UFUNCTION(BlueprintCallable, Category="Chunk")
-	void ModifyVoxel(const FIntVector Position);
 	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	float Frequency = 0.01f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	ProceduralGenerationType GenerationType;
+	UFUNCTION(BlueprintCallable, Category="Chunk")
+	void ModifyVoxel(const FVector Position);
+	
+	virtual void StartGeneration();
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-	
+
+	virtual ProceduralGenerationType SetGenerationType() {return GenerationType;};
 	virtual void Setup() PURE_VIRTUAL(AChunkBase::Setup);
 	virtual void Generate2DHeightMap(const FVector Position) PURE_VIRTUAL(AChunkBase::Generate2DHeightMap);
 	virtual void Generate3DHeightMap(const FVector Position) PURE_VIRTUAL(AChunkBase::Generate3DHeightMap);
 	virtual void GenerateMesh() PURE_VIRTUAL(AChunkBase::GenerateMesh);
 
-	virtual void ModifyVoxelData(const FIntVector Position) PURE_VIRTUAL(AChunkBase::RemoveVoxelData);
+	virtual void ModifyVoxelData(const FVector Position) PURE_VIRTUAL(AChunkBase::RemoveVoxelData);
 
 	TObjectPtr<UProceduralMeshComponent> Mesh;
 	FastNoiseLite* Noise;
