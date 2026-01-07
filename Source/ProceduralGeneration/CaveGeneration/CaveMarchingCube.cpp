@@ -12,8 +12,10 @@ ACaveMarchingCube::ACaveMarchingCube()
 	SetRootComponent(mesh);
 	noise = new FastNoiseLite();
 	noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
-	
+	noise->SetFrequency(0.02f);
 }
+
+
 
 
 // Called when the game starts or when spawned
@@ -21,8 +23,9 @@ void ACaveMarchingCube::BeginPlay()
 {
 	Super::BeginPlay();
 	densityGrid.Init(1.0f, gridSize * gridSize * gridSize);
-	CaveWorm();
-	GenerateMesh();
+	GenerateCaveSystem();
+	//CaveWorm();
+	//GenerateMesh();
 }
 
 // Called every frame
@@ -49,58 +52,139 @@ FVector ACaveMarchingCube::VertexInterpolation(FVector p1, FVector p2, float val
 	return p1 + (p2 - p1) * Mu;
 }
 
-
-
-void ACaveMarchingCube::CaveWorm()
+void ACaveMarchingCube::CarveSphere(FVector Center, float Radius)
 {
-	FVector currentPos = FVector(gridSize / 2, gridSize / 2, gridSize - 5); 
-    
-  
-    noise->SetFrequency(wormNoiseFrequency);
+	int32 R = FMath::CeilToInt(Radius + 1);
 
-    for (int step = 0; step < wormSteps; step++)
+	for (int32 z = -R; z <= R; z++)
+	{
+		for (int32 y = -R; y <= R; y++)
+		{
+			for (int32 x = -R; x <= R; x++)
+			{
+				FVector VoxelOffset(x, y, z);
+				FVector TargetPos = Center + VoxelOffset;
+                
+				// Bounds Check
+				if (TargetPos.X >= 1 && TargetPos.X < gridSize - 1 &&
+					TargetPos.Y >= 1 && TargetPos.Y < gridSize - 1 &&
+					TargetPos.Z >= 1 && TargetPos.Z < gridSize - 1)
+				{
+					float Dist = VoxelOffset.Size();
+					if (Dist < Radius)
+					{
+						int32 Idx = GetIndex((int32)TargetPos.X, (int32)TargetPos.Y, (int32)TargetPos.Z);
+						// Set density to negative (Air)
+						// Using FMath::Min ensures we don't accidentally fill a hole we already dug
+						densityGrid[Idx] = FMath::Min(densityGrid[Idx], -1.0f);
+					}
+				}
+			}
+		}
+	}
+}
+
+void ACaveMarchingCube::GenerateCaveSystem()
+{
+	densityGrid.Init(1.0f, gridSize * gridSize * gridSize);
+
+    // 2. Setup Worm Management
+    TArray<FWorm> ActiveWorms;
+    int32 TotalWormsSpawned = 0;
+
+    // --- CREATE THE MOTHER WORM ---
+    // Start at Top Center (Surface)
+    FWorm MotherWorm;
+    MotherWorm.Position = FVector(gridSize / 2, gridSize / 2, gridSize - 5);
+    MotherWorm.Direction = FVector(0, 0, -1); // Initial push DOWN
+    MotherWorm.RemainingSteps = 400; // Long life for main tunnel
+    MotherWorm.Radius = 5.0f; // Big tunnel
+    MotherWorm.NoiseOffset = FMath::RandRange(0.0f, 1000.0f);
+    
+    ActiveWorms.Add(MotherWorm);
+    TotalWormsSpawned++;
+
+    // 3. Simulation Loop
+    // Continue until all worms have died
+    while (ActiveWorms.Num() > 0)
     {
-  
-        float dirX = noise->GetNoise((float)step, 0.0f);
-        float dirY = noise->GetNoise((float)step, 100.0f);
-        float dirZ = noise->GetNoise((float)step, 200.0f) - 0.5f; 
-
-        FVector direction = FVector(dirX, dirY, dirZ).GetSafeNormal();
-        currentPos += direction * (wormRadius * 0.5f); 
-
-    
-        int RadiusInt = FMath::CeilToInt(wormRadius + 2);
-        
-
-        for (int z = -RadiusInt; z <= RadiusInt; z++)
+        // Iterate backwards so we can remove items safely
+        for (int32 i = ActiveWorms.Num() - 1; i >= 0; i--)
         {
-            for (int y = -RadiusInt; y <= RadiusInt; y++)
+            FWorm& CurrentWorm = ActiveWorms[i];
+
+            // --- MOVEMENT LOGIC ---
+            // Use Noise + Momentum to calculate new direction
+            // We use (OriginalSteps - Remaining) as the time value for noise
+            float Time = (400 - CurrentWorm.RemainingSteps) * 0.1f; 
+            
+            float NoiseX = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 0.0f);
+            float NoiseY = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 100.0f);
+            float NoiseZ = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 200.0f);
+
+        	float HorizontalScale = 2.5f; 
+
+        	// Weaken Z so it doesn't wiggle up/down as violently (flattens the floor/ceiling)
+        	float VerticalScale = 1.0f; //initial 0.3f
+
+        	// Reduce the downward bias significantly. 
+        	// -0.6f was a "Slide"; -0.05f is a "Slight Slope"
+        	float DownwardBias = -0.05f;
+        	
+            // Add strong downward bias to Z noise (-0.6) to keep caves going deep
+            //FVector NoiseDir = FVector(NoiseX, NoiseY, NoiseZ - 0.6f); 
+        	FVector NoiseDir = FVector(
+				NoiseX * HorizontalScale, 
+				NoiseY * HorizontalScale, 
+				(NoiseZ * VerticalScale) + DownwardBias
+			);
+            // Blend new noise with old direction (Inertia) to prevent jagged turns
+        	FVector NewDirection = (CurrentWorm.Direction * 0.7f + NoiseDir * 0.3f).GetSafeNormal();
+            CurrentWorm.Direction = NewDirection;
+
+            // Move
+            CurrentWorm.Position += NewDirection * (CurrentWorm.Radius * 0.6f); // Move roughly half a radius per step
+
+            // --- CARVE ---
+            CarveSphere(CurrentWorm.Position, CurrentWorm.Radius);
+
+            // --- BRANCHING LOGIC ---
+            // Only branch if we haven't hit the limit AND rolled the dice
+            if (TotalWormsSpawned < MaxWormsTotal && FMath::FRand() < BranchProbability)
             {
-                for (int x = -RadiusInt; x <= RadiusInt; x++)
-                {
-                    FVector VoxelOffset(x, y, z);
-                    FVector targetVoxel = currentPos + VoxelOffset;
+                FWorm ChildWorm;
+                ChildWorm.Position = CurrentWorm.Position; // Start where parent is
+                
+                // Shoot child off in a random direction (slightly different from parent)
+                ChildWorm.Direction = FMath::VRand(); 
+                
+                ChildWorm.RemainingSteps = CurrentWorm.RemainingSteps / 2; // Child lives half as long
+                ChildWorm.Radius = FMath::Max(2.0f, CurrentWorm.Radius * 0.8f); // Child is smaller
+                ChildWorm.NoiseOffset = FMath::RandRange(0.0f, 1000.0f); // Unique path
 
+                ActiveWorms.Add(ChildWorm); // Add to end of list (processed next frame)
+                TotalWormsSpawned++;
+            }
 
-                    if (targetVoxel.X > 0 && targetVoxel.X < gridSize - 1 &&
-                        targetVoxel.Y > 0 && targetVoxel.Y < gridSize - 1 &&
-                        targetVoxel.Z > 0 && targetVoxel.Z < gridSize - 1)
-                    {
-                        float Dist = FVector::Dist(currentPos, targetVoxel);
-                        
+            // --- DEATH ---
+            CurrentWorm.RemainingSteps--;
+            
+            // Kill if steps done OR if it wandered out of bounds
+            bool bOutOfBounds = (CurrentWorm.Position.X <= 2 || CurrentWorm.Position.X >= gridSize - 2 ||
+                                 CurrentWorm.Position.Y <= 2 || CurrentWorm.Position.Y >= gridSize - 2 ||
+                                 CurrentWorm.Position.Z <= 2 || CurrentWorm.Position.Z >= gridSize - 2);
 
-                        if (Dist < wormRadius)
-                        {
-                            int index = GetIndex(targetVoxel.X, targetVoxel.Y, targetVoxel.Z);
-
-                            densityGrid[index] = FMath::Min(densityGrid[index], -1.0f); 
-                        }
-                    }
-                }
+            if (CurrentWorm.RemainingSteps <= 0 || bOutOfBounds)
+            {
+                ActiveWorms.RemoveAt(i);
             }
         }
     }
+
+    // 4. Generate the final mesh
+    GenerateMesh();
 }
+
 
 void ACaveMarchingCube::GenerateMesh()
 {

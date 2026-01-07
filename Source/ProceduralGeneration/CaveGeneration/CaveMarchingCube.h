@@ -7,6 +7,15 @@
 
 class UProceduralMeshComponent;
 
+struct FWorm
+{
+	FVector Position;
+	FVector Direction; // Current movement vector (for smoothness)
+	int32 RemainingSteps;
+	float Radius;
+	float NoiseOffset; // Unique offset so they don't follow the same path
+};
+
 UCLASS()
 class PROCEDURALGENERATION_API ACaveMarchingCube : public AActor
 {
@@ -34,8 +43,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Worm Settings")
 	float wormNoiseFrequency = 0.05f;
 
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float BranchProbability = 0.05f; // 5% chance to spawn a branch per step
+
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	int32 MaxWormsTotal = 50; // Safety limit to prevent infinite loops
+
 	
 	//TObjectPtr<UMaterialInterface> material;
+	void GenerateCaveSystem();
 
 protected:
 	// Called when the game starts or when spawned
@@ -52,6 +68,10 @@ private:
 	void GenerateMesh();
 	int GetIndex(int x, int y, int z);
 	FVector VertexInterpolation(FVector p1, FVector p2, float valp1, float valp2);
+
+	// Helper to carve a single sphere
+	void CarveSphere(FVector Center, float Radius);
+	
 	
 	int edgeTable[256]={
 	0x0  , 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
