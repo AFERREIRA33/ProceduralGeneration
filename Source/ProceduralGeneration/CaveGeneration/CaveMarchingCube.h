@@ -24,6 +24,7 @@ class PROCEDURALGENERATION_API ACaveMarchingCube : public AActor
 public:
 	// Sets default values for this actor's properties
 	ACaveMarchingCube();
+	~ACaveMarchingCube();
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
 	int32 gridSize = 32;
@@ -66,6 +67,14 @@ public:
 	// How big the rooms are
 	UPROPERTY(EditAnywhere, Category = "Cave Settings")
 	float RoomRadius = 15.0f;
+
+	// Size of a single chunk (e.g., 32 voxels)
+	UPROPERTY(EditAnywhere, Category = "Chunk Settings")
+	int32 ChunkSize = 32;
+
+	// How many chunks wide the world is (e.g., 4x4 world)
+	UPROPERTY(EditAnywhere, Category = "Chunk Settings")
+	int32 WorldWidthInChunks = 4;
 	
 	//TObjectPtr<UMaterialInterface> material;
 	void GenerateCaveSystem();
@@ -81,13 +90,22 @@ protected:
 	TArray<float> densityGrid;
 
 private:
-	void CaveWorm();
 	void GenerateMesh();
 	int GetIndex(int x, int y, int z);
 	FVector VertexInterpolation(FVector p1, FVector p2, float valp1, float valp2);
 	void CarveRoom(FVector Center, float BaseRadius);
 	// Helper to carve a single sphere
 	void CarveSphere(FVector Center, float Radius);
+	// The "Global" grid resolution (ChunkSize * WorldWidthInChunks)
+	int32 globalSize;
+
+	// Helper to get global index
+	int32 GetGlobalIndex(int32 X, int32 Y, int32 Z);
+
+	// New Function: Generates just ONE piece of the mesh
+	void GenerateChunkMesh(int32 ChunkX, int32 ChunkY, int32 SectionIndex);
+	float GetDensitySafe(int32 X, int32 Y, int32 Z);
+	FVector CalculateGradientNormal(int32 X, int32 Y, int32 Z);
 	
 	
 	int edgeTable[256]={
