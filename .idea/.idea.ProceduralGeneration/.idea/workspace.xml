@@ -14,7 +14,6 @@
   <component name="ChangeListManager">
     <list default="true" id="b1151afd-6359-4b3a-b885-f466489d3b9f" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/5/TG/XUVRP014Z4OBIYVIJSQB0Z.uasset" beforeDir="false" afterPath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/TestCave/5/TG/XUVRP014Z4OBIYVIJSQB0Z.uasset" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/CaveGeneration/CaveMarchingCube.h" afterDir="false" />
     </list>
@@ -30,9 +29,7 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
-    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
-    <setting file="cidr-memory-view://9" root0="FORCE_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://1" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files/Epic Games/UE_5.6/Engine/Source/Runtime/CoreUObject/Private/UObject/UObjectArchetype.cpp" root0="FORCE_HIGHLIGHTING" />
   </component>
   <component name="MetaFilesCheckinStateConfiguration" checkMetaFiles="true" />
@@ -179,6 +176,7 @@
       <workItem from="1764771102866" duration="4758000" />
       <workItem from="1767686759811" duration="12327000" />
       <workItem from="1767773982953" duration="14168000" />
+      <workItem from="1767859698843" duration="4734000" />
     </task>
     <servers />
   </component>

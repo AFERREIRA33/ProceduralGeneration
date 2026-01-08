@@ -49,6 +49,23 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Cave Settings")
 	int32 MaxWormsTotal = 50; // Safety limit to prevent infinite loops
 
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float HorizontalScale = 2.5f;
+
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float VerticalScale = 1.0f;
+	
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float DownwardBias = -0.05f;
+
+	// Probability (0-1) that a worm step spawns a room. 
+	// 0.005 means roughly 1 room every 200 steps.
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float RoomProbability = 0.005f; 
+
+	// How big the rooms are
+	UPROPERTY(EditAnywhere, Category = "Cave Settings")
+	float RoomRadius = 15.0f;
 	
 	//TObjectPtr<UMaterialInterface> material;
 	void GenerateCaveSystem();
@@ -68,7 +85,7 @@ private:
 	void GenerateMesh();
 	int GetIndex(int x, int y, int z);
 	FVector VertexInterpolation(FVector p1, FVector p2, float valp1, float valp2);
-
+	void CarveRoom(FVector Center, float BaseRadius);
 	// Helper to carve a single sphere
 	void CarveSphere(FVector Center, float Radius);
 	

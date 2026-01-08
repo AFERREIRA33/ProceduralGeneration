@@ -52,6 +52,56 @@ FVector ACaveMarchingCube::VertexInterpolation(FVector p1, FVector p2, float val
 	return p1 + (p2 - p1) * Mu;
 }
 
+void ACaveMarchingCube::CarveRoom(FVector Center, float BaseRadius)
+{
+	// 1. Determine bounding box for this room
+	// We add some buffer for the noise distortion
+	int32 R = FMath::CeilToInt(BaseRadius + 5.0f);
+
+	// 2. Configure Noise for wall roughness
+	// High frequency = rugged, rocky walls
+	FastNoiseLite WallNoise; 
+	WallNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	WallNoise.SetFrequency(0.1f); 
+
+	for (int32 z = -R; z <= R; z++)
+	{
+		for (int32 y = -R; y <= R; y++)
+		{
+			for (int32 x = -R; x <= R; x++)
+			{
+				FVector VoxelOffset(x, y, z);
+				FVector TargetPos = Center + VoxelOffset;
+
+				// Bounds Check
+				if (TargetPos.X <= 0 || TargetPos.X >= gridSize - 1 ||
+					TargetPos.Y <= 0 || TargetPos.Y >= gridSize - 1 ||
+					TargetPos.Z <= 0 || TargetPos.Z >= gridSize - 1)
+					continue;
+
+				// 3. Calculate Distance
+				float Dist = VoxelOffset.Size();
+
+				// 4. Distort the Radius
+				// We sample noise based on the direction from the center
+				float NoiseValue = WallNoise.GetNoise((float)x, (float)y, (float)z);
+                
+				// The "Real" radius for this specific voxel fluctuates
+				// e.g. Radius 15 becomes 13 to 17 depending on noise
+				float NoisyRadius = BaseRadius + (NoiseValue * 5.0f); 
+
+				if (Dist < NoisyRadius)
+				{
+					int32 Idx = GetIndex((int32)TargetPos.X, (int32)TargetPos.Y, (int32)TargetPos.Z);
+                    
+					// Carve Air (-1.0)
+					densityGrid[Idx] = FMath::Min(densityGrid[Idx], -1.0f);
+				}
+			}
+		}
+	}
+}
+
 void ACaveMarchingCube::CarveSphere(FVector Center, float Radius)
 {
 	int32 R = FMath::CeilToInt(Radius + 1);
@@ -121,15 +171,6 @@ void ACaveMarchingCube::GenerateCaveSystem()
             float NoiseX = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 0.0f);
             float NoiseY = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 100.0f);
             float NoiseZ = noise->GetNoise(Time + CurrentWorm.NoiseOffset, 200.0f);
-
-        	float HorizontalScale = 2.5f; 
-
-        	// Weaken Z so it doesn't wiggle up/down as violently (flattens the floor/ceiling)
-        	float VerticalScale = 1.0f; //initial 0.3f
-
-        	// Reduce the downward bias significantly. 
-        	// -0.6f was a "Slide"; -0.05f is a "Slight Slope"
-        	float DownwardBias = -0.05f;
         	
             // Add strong downward bias to Z noise (-0.6) to keep caves going deep
             //FVector NoiseDir = FVector(NoiseX, NoiseY, NoiseZ - 0.6f); 
@@ -147,6 +188,27 @@ void ACaveMarchingCube::GenerateCaveSystem()
 
             // --- CARVE ---
             CarveSphere(CurrentWorm.Position, CurrentWorm.Radius);
+
+        	bool bIsOldEnough = (400 - CurrentWorm.RemainingSteps) > 20;
+
+        	if (bIsOldEnough && FMath::FRand() < RoomProbability)
+        	{
+        		// Randomize room size slightly for variety
+        		float ActualRoomSize = FMath::RandRange(RoomRadius * 0.8f, RoomRadius * 1.5f);
+        
+        		CarveRoom(CurrentWorm.Position, ActualRoomSize);
+
+        		// OPTIONAL: Reset the worm's steps or spawn extra children here?
+        		// Spawning children inside a room creates a nice "Hub" effect.
+        		if (TotalWormsSpawned < MaxWormsTotal)
+        		{
+        			FWorm BranchWorm = CurrentWorm;
+        			BranchWorm.Direction = FMath::VRand(); // Go random direction from room
+        			BranchWorm.RemainingSteps = 100;
+        			ActiveWorms.Add(BranchWorm);
+        			TotalWormsSpawned++;
+        		}
+        	}
 
             // --- BRANCHING LOGIC ---
             // Only branch if we haven't hit the limit AND rolled the dice
