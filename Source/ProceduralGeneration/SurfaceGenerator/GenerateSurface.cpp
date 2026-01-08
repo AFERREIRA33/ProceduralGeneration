@@ -6,27 +6,55 @@
 
 void AGenerateSurface::Setup()
 {
-	// Initialize Voxels
-	Voxels.SetNum((Size + 1) * (Size + 1) * (Size + 1));
-}
+	const int Dim = Size + 1;
+	Voxels.SetNumZeroed(Dim * Dim * Dim);
 
-void AGenerateSurface::Generate2DHeightMap(const FVector Position)
-{
-	for (int x = 0; x <= Size; x++)
+	// Example 2D height sampling (fill your own noise sampling)
+	for (int x = 0; x < Dim; ++x)
 	{
-		for (int y = 0; y <= Size; y++)
+		for (int y = 0; y < Dim; ++y)
 		{
-			const float Xpos = x + Position.X;
-			const float ypos = y + Position.Y;
-			const int Height = FMath::Clamp(FMath::RoundToInt((Noise->GetNoise(Xpos, ypos) + 1) * Size / 2), 0, Size);
-
-			for (int z = 0; z <= Size; z++)
+			// compute height in world units (use your noise, offset by actor/world position)
+			float sampleHeight = /* Noise sampling here returning world z */ 0.0f;
+			for (int z = 0; z < Dim; ++z)
 			{
-				Voxels[GetVoxelIndex(x, y, z)] = Height - z;
+				// store signed distance relative to SurfaceLevel (marching uses iso = 0)
+				float value = (float)z - sampleHeight - (float)SurfaceLevel;
+				Voxels[GetVoxelIndex(x, y, z)] = value;
 			}
 		}
 	}
- }
+}
+void AGenerateSurface::Generate2DHeightMap(const FVector Position)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Generating 2D Height Map at Position: %s"), *Position.ToString());
+	Voxels.SetNum((Size + 1) * (Size + 1) * (Size + 1));
+    
+	for (int x = 0; x <= Size; ++x)
+	{
+		for (int y = 0; y <= Size; ++y)
+		{
+			if (x ==0 && y == 0)
+				UE_LOG( LogTemp, Warning, TEXT("Generating voxel column at x: %f, y: %f"), ((Position.X / 100.0f) + x), (Position.Y / 100.0f) + y);
+			// Get 2D noise height at this x,y position
+			float noiseHeight = Noise->GetNoise(
+				(Position.X ) + x, 
+				(Position.Y ) + y
+			);
+            
+			// Scale noise to useful range (e.g., 0 to Size)
+			float terrainHeight = (noiseHeight + 1.0f) * 0.5f * Size;
+            
+			for (int z = 0; z <= Size; z++)
+			{
+				int index = GetVoxelIndex(x, y, z);
+				// Voxel value: negative = solid, positive = air
+				// Distance from terrain surface
+				Voxels[index] = z - terrainHeight;
+			}
+		}
+	}
+}
 
 ProceduralGenerationType AGenerateSurface::SetGenerationType()
 {
@@ -35,129 +63,94 @@ ProceduralGenerationType AGenerateSurface::SetGenerationType()
 
 int AGenerateSurface::GetVoxelIndex(const int X, const int Y, const int Z) const
 {
-	return Z * (Size + 1) * (Size + 1) + Y * (Size + 1) + X;
+	return X + Y * (Size + 1) + Z * (Size + 1) * (Size + 1);
 }
 
 void AGenerateSurface::GenerateMesh()
 {
-	// Triangulation order
-	if (SurfaceLevel > 0.0f)
-	{
-		TriangleOrder[0] = 0;
-		TriangleOrder[1] = 1;
-		TriangleOrder[2] = 2;
-	}
-	else
-	{
-		TriangleOrder[0] = 2;
-		TriangleOrder[1] = 1;
-		TriangleOrder[2] = 0;
-	}
+	// Clear previous mesh arrays (Vertices, Triangles, Normals, UVs, etc.)
+	MeshData.Clear();
+	VertexCount = 0;
 
-	TArray<float> Cube = TArray<float>();
-	Cube.Init(0, 8);
-
-
-	for (int X = 0; X < Size; ++X)
+	// March over cubes (Size cubes along each axis)
+	for (int x = 0; x < Size; ++x)
 	{
-		for (int Y = 0; Y < Size; ++Y)
+		for (int y = 0; y < Size; ++y)
 		{
-			for (int Z = 0; Z < Size; ++Z)
+			for (int z = 0; z < Size; ++z)
 			{
+				TArray<float> cubeValues;
+				cubeValues.SetNumUninitialized(8);
 				for (int i = 0; i < 8; ++i)
 				{
-					Cube[i] = Voxels[GetVoxelIndex(X + VertexOffset[i][0],Y + VertexOffset[i][1],Z + VertexOffset[i][2])];
+					int vx = x + VertexOffset[i][0];
+					int vy = y + VertexOffset[i][1];
+					int vz = z + VertexOffset[i][2];
+					cubeValues[i] = Voxels[GetVoxelIndex(vx, vy, vz)];
 				}
-
-				March(X,Y,Z, Cube);
+				March(x, y, z, cubeValues);
 			}
 		}
 	}
-	UE_LOG(LogTemp, Display, TEXT("Min Value: %f"), Min);
-	UE_LOG(LogTemp, Display, TEXT("Max Value: %f"), Max);
-	
 
+	// After building vertices/triangles update procedural mesh component (ApplyMesh)
 }
 
 
 void AGenerateSurface::March(const int X, const int Y, const int Z, TArray<float> Cube)
 {
-	//Find which vertices are inside of the surface and which are outside
-	int VertexMask = 0;
+	// Compute cubeIndex using iso=0
+	int cubeIndex = 0;
 	for (int i = 0; i < 8; ++i)
 	{
-		if (Cube[i] < SurfaceLevel) VertexMask |= 1 << i;
+		if (Cube[i] < 0.0f) // inside
+			cubeIndex |= (1 << i);
 	}
 
-	const int EdgeMask = CubeEdgeFlags[VertexMask];
-	if (EdgeMask == 0) return;
-	
-	FVector EdgeVertex[12];
+	int edgeFlags = CubeEdgeFlags[cubeIndex];
+	if (edgeFlags == 0) return;
+
+	// For each edge, compute interpolated vertex
+	FVector edgeVertex[12];
+	const float VoxelScale = 100.0f; // match your chunk/world scale
 	for (int i = 0; i < 12; ++i)
 	{
-		if ((EdgeMask & 1 << i) != 0)
+		if (edgeFlags & (1 << i))
 		{
-			int point = EdgeConnection[i][0];
-			int connectionPoint = EdgeConnection[i][1];
-			const int vertexOffP1[3] = {VertexOffset[point][0], VertexOffset[point][1], VertexOffset[point][2]};
-			const int vertexOffP2[3] = {VertexOffset[connectionPoint][0], VertexOffset[connectionPoint][1], VertexOffset[connectionPoint][2]};
-			FVector P1 = FVector(X + vertexOffP1[0],Y + vertexOffP1[1],Z + vertexOffP1[2]);
-			FVector P2 =  FVector(X + vertexOffP2[0],Y + vertexOffP2[1],Z + vertexOffP2[2]);
-			if (Min > Cube[EdgeConnection[i][0]])
-			{
-				Min = Cube[EdgeConnection[i][0]];
-			}
-			if (Min > Cube[EdgeConnection[i][1]])
-			{
-				Min = Cube[EdgeConnection[i][1]];
-			}
-			if (Max < Cube[EdgeConnection[i][0]])
-			{
-				Max = Cube[EdgeConnection[i][0]];
-			}
-			if (Max < Cube[EdgeConnection[i][1]])
-			{
-				Max = Cube[EdgeConnection[i][1]];
-			}
-			const float Delta = GetInterpolationOffset(Cube[EdgeConnection[i][0]], Cube[EdgeConnection[i][1]]);
-			EdgeVertex[i] = P1+ (P2 - P1)*Delta;
+			int v1 = EdgeConnection[i][0];
+			int v2 = EdgeConnection[i][1];
+
+			FVector p1 = FVector(X + VertexOffset[v1][0], Y + VertexOffset[v1][1], Z + VertexOffset[v1][2]);
+			FVector p2 = FVector(X + VertexOffset[v2][0], Y + VertexOffset[v2][1], Z + VertexOffset[v2][2]);
+
+			float t = GetInterpolationOffset(Cube[v1], Cube[v2]);
+			FVector p = FMath::Lerp(p1, p2, t) * VoxelScale;
+			edgeVertex[i] = p;
 		}
 	}
 
-	for (int i = 0; i < 5; ++i)
+	// Build triangles from TriangleConnectionTable
+	for (int t = 0; t < 16; t += 3)
 	{
-		if (TriangleConnectionTable[VertexMask][3 * i] < 0) break;
+		int idx0 = TriangleConnectionTable[cubeIndex][t + 0];
+		if (idx0 < 0) break;
+		int idx1 = TriangleConnectionTable[cubeIndex][t + 1];
+		int idx2 = TriangleConnectionTable[cubeIndex][t + 2];
 
-		auto V1 = EdgeVertex[TriangleConnectionTable[VertexMask][3 * i]] * 100;
-		auto V2 = EdgeVertex[TriangleConnectionTable[VertexMask][3 * i + 1]] * 100;
-		auto V3 = EdgeVertex[TriangleConnectionTable[VertexMask][3 * i + 2]] * 100;
+		FVector a = edgeVertex[idx0];
+		FVector b = edgeVertex[idx1];
+		FVector c = edgeVertex[idx2];
 
-		auto Normal = FVector::CrossProduct(V2 - V1, V3 - V1);
-		auto Color = FColor::MakeRandomColor();
-		
-		Normal.Normalize();
+		MeshData.Vertices.Add(a);
+		MeshData.Vertices.Add(b);
+		MeshData.Vertices.Add(c);
 
-		MeshData.Vertices.Append({V1, V2, V3});
-		
-		MeshData.Triangles.Append({
-			VertexCount + TriangleOrder[0],
-			VertexCount + TriangleOrder[1],
-			VertexCount + TriangleOrder[2]
-		});
-
-		MeshData.Normals.Append({
-			Normal,
-			Normal,
-			Normal
-		});
-
-		MeshData.Colors.Append({
-			Color,
-			Color,
-			Color
-		});
+		MeshData.Triangles.Add(VertexCount + 0);
+		MeshData.Triangles.Add(VertexCount + 1);
+		MeshData.Triangles.Add(VertexCount + 2);
 
 		VertexCount += 3;
+		
 	}
 }
 

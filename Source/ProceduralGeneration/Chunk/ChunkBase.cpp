@@ -31,7 +31,6 @@ void AChunkBase::BeginPlay()
 
 void AChunkBase::StartGeneration()
 {
-	UE_LOG( LogTemp, Warning, TEXT("Frequency: %f "), Frequency);
 	Noise->SetFrequency(Frequency);
 	Noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
 	Noise->SetFractalType(FastNoiseLite::FractalType_FBm);
@@ -67,11 +66,7 @@ void AChunkBase::GenerateHeightMap()
 void AChunkBase::ApplyMesh() const
 {
 	Mesh->SetMaterial(0, Material);
-	UE_LOG(LogTemp, Warning, TEXT("Applying Mesh with %d Vertices and %d Triangles"), MeshData.Vertices.Num(), MeshData.Triangles.Num() / 3);
-	// for (FVector vertice : MeshData.Vertices)
-	// {
-	// 	UE_LOG(LogTemp, Warning, TEXT("Vertex: X=%f, Y=%f, Z=%f"), vertice.X, vertice.Y, vertice.Z);
-	// }
+	Mesh->ClearAllMeshSections(); // ensure section 0 is replaced
 	Mesh->CreateMeshSection(
 		0,
 		MeshData.Vertices,

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Utils/FastNoiseLite.h"
 #include "WorldGenerator.generated.h"
 
 UCLASS()
@@ -31,6 +32,7 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+	FastNoiseLite* Noise;
 private:
 	// TQueue<AChunkBase*> chunkQueue;
 	// TArray<AChunkBase*> chunks;
