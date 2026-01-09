@@ -34,8 +34,10 @@ void AWorldGenerator::GenerateWorld()
 	{
 		for (int y = 0; y < MapRange; ++y)
 		{
-			FVector position = FVector(x * Size*100, y * Size*100, 0.0f);
+			FVector position = FVector(x * Size*100, y * Size*100, -SurfaceLevel*100);
+			UE_LOG( LogTemp, Warning, TEXT("Spawning Chunk at Position: %s"), *position.ToString());
 			AGenerateSurface* chunk = GetWorld()->SpawnActor<AGenerateSurface>(position, FRotator::ZeroRotator);
+			chunk->Material = Material;
 			chunk->Frequency = Frequency;
 			chunk->SurfaceLevel = SurfaceLevel;
 			chunk->Size = Size;

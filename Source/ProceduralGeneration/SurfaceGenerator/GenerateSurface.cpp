@@ -25,9 +25,9 @@ void AGenerateSurface::Setup()
 		}
 	}
 }
-void AGenerateSurface::Generate2DHeightMap(const FVector Position)
+void AGenerateSurface::Generate2DHeightMap(FVector Position)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Generating 2D Height Map at Position: %s"), *Position.ToString());
+	UE_LOG(LogTemp, Warning, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
 	Voxels.SetNum((Size + 1) * (Size + 1) * (Size + 1));
     
 	for (int x = 0; x <= Size; ++x)
@@ -35,7 +35,7 @@ void AGenerateSurface::Generate2DHeightMap(const FVector Position)
 		for (int y = 0; y <= Size; ++y)
 		{
 			if (x ==0 && y == 0)
-				UE_LOG( LogTemp, Warning, TEXT("Generating voxel column at x: %f, y: %f"), ((Position.X / 100.0f) + x), (Position.Y / 100.0f) + y);
+				UE_LOG( LogTemp, Warning, TEXT("Generating voxel column at x: %f, y: %f"), ((Position.X ) + x), (Position.Y) + y);
 			// Get 2D noise height at this x,y position
 			float noiseHeight = Noise->GetNoise(
 				(Position.X ) + x, 
@@ -126,6 +126,7 @@ void AGenerateSurface::March(const int X, const int Y, const int Z, TArray<float
 			float t = GetInterpolationOffset(Cube[v1], Cube[v2]);
 			FVector p = FMath::Lerp(p1, p2, t) * VoxelScale;
 			edgeVertex[i] = p;
+			
 		}
 	}
 
@@ -148,9 +149,62 @@ void AGenerateSurface::March(const int X, const int Y, const int Z, TArray<float
 		MeshData.Triangles.Add(VertexCount + 0);
 		MeshData.Triangles.Add(VertexCount + 1);
 		MeshData.Triangles.Add(VertexCount + 2);
-
+		FVector VectorAB = b-a;
+		FVector VectorAC = c-a;
+		FVector normal = FVector::CrossProduct(VectorAC, VectorAB).GetSafeNormal();
+		MeshData.Normals.Add(normal);
+		MeshData.Normals.Add(normal);
+		MeshData.Normals.Add(normal);
 		VertexCount += 3;
-		
+
+		MeshData.UV0.Add(GetUV(a, normal));
+		MeshData.UV0.Add(GetUV(b, normal));
+		MeshData.UV0.Add(GetUV(c, normal));
+	}
+}
+FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
+{
+	// Scale for texture tiling (smaller = more repetition/detail)
+	const float UVScale = 0.005f; // Adjust to match texture resolution
+
+	// Triplanar projection for seamless mapping on any surface angle
+	FVector absNormal = Normal.GetAbs();
+
+	if (absNormal.Z >= absNormal.X && absNormal.Z >= absNormal.Y)
+	{
+		// Top/bottom face - use X,Y
+		return FVector2D(Position.X, Position.Y) * UVScale;
+	}
+	else if (absNormal.X >= absNormal.Y)
+	{
+		// Side face - use Y,Z
+		return FVector2D(Position.Y, Position.Z) * UVScale;
+	}
+	else
+	{
+		// Front/back face - use X,Z
+		return FVector2D(Position.X, Position.Z) * UVScale;
+	}
+}
+FColor AGenerateSurface::GetColor(FVector Position, FVector Normal) const
+{
+	FColor colorA = FColor::White;
+	FColor colorB = FColor(11,128,37);
+	FColor colorC = FColor(86, 97, 89);
+	float angle = FMath::Acos(FVector::DotProduct(Normal, FVector::UpVector));
+	// UE_LOG( LogTemp, Warning, TEXT("Angle: %f"), Position.Z);
+	if (angle > FMath::DegreesToRadians(45.0f))
+	{
+		return colorC;
+	}
+	
+	if (Position.Z < SurfaceLevel+ 10000.0f)
+	{
+		return colorB;
+	}
+	else
+	{
+		return colorA;
 	}
 }
 
@@ -164,6 +218,21 @@ float AGenerateSurface::GetInterpolationOffset(const float V1, const float V2) c
 		return 0.5f;
 	}
 	return - PV1 / Delta;
+}
+
+void AGenerateSurface::ModifyVoxelData(FVector Position)
+{
+	const int Index = GetVoxelIndex(
+		static_cast<int>(Position.X),
+		static_cast<int>(Position.Y),
+		static_cast<int>(Position.Z)
+	);
+    
+	if (Index >= 0 && Index < Voxels.Num())
+	{
+		// Toggle voxel - flip above/below surface threshold
+		Voxels[Index] = Voxels[Index] > SurfaceLevel ? SurfaceLevel - 1.0f : SurfaceLevel + 1.0f;
+	}
 }
 
 #pragma optimize("", on)

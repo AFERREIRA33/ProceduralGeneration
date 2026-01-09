@@ -16,7 +16,10 @@
       <change beforePath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.ProceduralGeneration/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/MapTestGenerationSurface/0/KG/IKSNGECQGJQSQ95X34DJIB.uasset" beforeDir="false" afterPath="$PROJECT_DIR$/Content/__ExternalActors__/Scene/MapTestGenerationSurface/0/KG/IKSNGECQGJQSQ95X34DJIB.uasset" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/Chunk/ChunkBase.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/Chunk/ChunkBase.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/Chunk/ChunkBase.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/Chunk/ChunkBase.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/SurfaceGenerator/GenerateSurface.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/SurfaceGenerator/GenerateSurface.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/SurfaceGenerator/GenerateSurface.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/SurfaceGenerator/GenerateSurface.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/WorldGenerator.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/WorldGenerator.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/ProceduralGeneration/WorldGenerator.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/ProceduralGeneration/WorldGenerator.h" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -31,7 +34,9 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://3" root0="FORCE_HIGHLIGHTING" />
+    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
+    <setting file="mock:///dummy.cpp" root0="SKIP_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://6" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Programs/AutomationTool/Gauntlet/SelfTest/TestData/LogParser/LinuxAssert.txt" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Programs/UnrealBuildTool/Platform/IOS/PListHelper.cs" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Programs/UnrealBuildTool/System/CppDependencyCache.cs" root0="FORCE_HIGHLIGHTING" />
@@ -40,6 +45,7 @@
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/Core/Private/Misc/AssertionMacros.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/Core/Private/Windows/WindowsErrorOutputDevice.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/Core/Public/Math/Vector.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/Core/Public/String/FormatStringSanErrors.inl" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/CoreUObject/Private/UObject/Obj.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/CoreUObject/Private/UObject/UObjectGlobals.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/../../../../../Program Files (x86)/UE_5.6/Engine/Source/Runtime/Engine/Classes/Engine/World.h" root0="FORCE_HIGHLIGHTING" />
@@ -186,7 +192,8 @@
       <workItem from="1764753865481" duration="17625000" />
       <workItem from="1767686554192" duration="22752000" />
       <workItem from="1767773425520" duration="17493000" />
-      <workItem from="1767858953807" duration="6400000" />
+      <workItem from="1767858953807" duration="19013000" />
+      <workItem from="1767951937941" duration="11510000" />
     </task>
     <servers />
   </component>

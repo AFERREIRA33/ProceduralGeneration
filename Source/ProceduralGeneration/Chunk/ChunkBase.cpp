@@ -77,6 +77,7 @@ void AChunkBase::ApplyMesh() const
 		TArray<FProcMeshTangent>(),
 		true
 	);
+	Mesh->SetCastShadow( true);
 }
 
 void AChunkBase::ClearMesh()

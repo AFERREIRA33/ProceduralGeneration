@@ -22,9 +22,10 @@ public:
 	// Sets default values for this actor's properties
 	AChunkBase();
 
-	UPROPERTY(EditDefaultsOnly, Category="Chunk")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	int Size = 64;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	TObjectPtr<UMaterialInterface> Material;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
@@ -41,11 +42,11 @@ protected:
 
 	virtual ProceduralGenerationType SetGenerationType() {return GenerationType;};
 	virtual void Setup() PURE_VIRTUAL(AChunkBase::Setup);
-	virtual void Generate2DHeightMap(const FVector Position) PURE_VIRTUAL(AChunkBase::Generate2DHeightMap);
-	virtual void Generate3DHeightMap(const FVector Position) PURE_VIRTUAL(AChunkBase::Generate3DHeightMap);
+	virtual void Generate2DHeightMap(FVector Position) PURE_VIRTUAL(AChunkBase::Generate2DHeightMap);
+	virtual void Generate3DHeightMap(FVector Position) PURE_VIRTUAL(AChunkBase::Generate3DHeightMap);
 	virtual void GenerateMesh() PURE_VIRTUAL(AChunkBase::GenerateMesh);
 
-	virtual void ModifyVoxelData(const FVector Position) PURE_VIRTUAL(AChunkBase::RemoveVoxelData);
+	virtual void ModifyVoxelData(FVector Position) PURE_VIRTUAL(AChunkBase::RemoveVoxelData);
 
 	TObjectPtr<UProceduralMeshComponent> Mesh;
 	FastNoiseLite* Noise;

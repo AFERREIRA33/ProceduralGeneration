@@ -21,13 +21,18 @@ private:
 
 	virtual ProceduralGenerationType SetGenerationType() override;
 	void Setup() override;
-	void Generate2DHeightMap(const FVector Position) override;
-	void Generate3DHeightMap(const FVector Position) override {};
-	void ModifyVoxelData(const FVector Position) override {};
+	void Generate2DHeightMap(FVector Position) override;
+	void Generate3DHeightMap(FVector Position) override {};
+	void ModifyVoxelData(FVector Position) override;
 	int GetVoxelIndex(const int X, const int Y, const int Z) const;
 	void GenerateMesh() override;
 	void March(const int X, const int Y, const int Z, TArray<float> Cube);
 	float GetInterpolationOffset(const float V1, const float V2) const;
+	
+	FVector2D GetUV(FVector Position, FVector Normal) const;
+	FColor GetColor(FVector Position, FVector Normal) const;
+	FVector GetVoxelNormal(FVector vertex) const;
+	
 	TObjectPtr<UProceduralMeshComponent> Mesh;
 	TArray<float> Voxels;
 	int TriangleOrder[3] = {0, 1, 2};

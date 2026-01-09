@@ -16,6 +16,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Chunk")
 	int Size = 64;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	TObjectPtr<UMaterialInterface> Material;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	float Frequency = 0.01f;
 	UPROPERTY(editAnywhere, BlueprintReadWrite)
 	int SurfaceLevel = 0;
