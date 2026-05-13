@@ -14,7 +14,7 @@ AChunkBase::AChunkBase()
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = false;
 	Mesh = CreateDefaultSubobject<UProceduralMeshComponent>("Mesh");
-	Noise = new FastNoiseLite();
+	Noise = MakeUnique<FastNoiseLite>(FastNoiseLite());
 
 	// Mesh Settings
 	Mesh->SetCastShadow(false);
@@ -31,9 +31,13 @@ void AChunkBase::BeginPlay()
 
 void AChunkBase::StartGeneration()
 {
+	Noise->SetSeed(Seed);
 	Noise->SetFrequency(Frequency);
 	Noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
 	Noise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	Noise->SetFractalOctaves(FractalOctaves);
+	Noise->SetFractalLacunarity(FractalLacunarity);
+	Noise->SetFractalGain(FractalGain);
 
 	GenerationType = SetGenerationType();
 

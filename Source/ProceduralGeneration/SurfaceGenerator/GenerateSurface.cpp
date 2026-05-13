@@ -1,26 +1,25 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-#include "GenerateSurface.h"
+﻿#include "GenerateSurface.h"
 #include"ProceduralGeneration/Utils/FastNoiseLite.h"
-
-#pragma optimize("", off)
 
 void AGenerateSurface::Setup()
 {
 	const int Dim = Size + 1;
 	Voxels.SetNumZeroed(Dim * Dim * Dim);
-
+	HumidityNoiseValues.SetNumZeroed(Dim * Dim);
+	TemperatureNoiseValues.SetNumZeroed(Dim * Dim);
+	float sampleHeight = 0.0f;
 	// Example 2D height sampling (fill your own noise sampling)
 	for (int x = 0; x < Dim; ++x)
 	{
 		for (int y = 0; y < Dim; ++y)
 		{
 			// compute height in world units (use your noise, offset by actor/world position)
-			float sampleHeight = /* Noise sampling here returning world z */ 0.0f;
 			for (int z = 0; z < Dim; ++z)
 			{
 				// store signed distance relative to SurfaceLevel (marching uses iso = 0)
-				float value = (float)z - sampleHeight - (float)SurfaceLevel;
+				float value = z - sampleHeight - SurfaceLevel;
 				Voxels[GetVoxelIndex(x, y, z)] = value;
+				
 			}
 		}
 	}
@@ -41,9 +40,16 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 				(Position.X ) + x, 
 				(Position.Y ) + y
 			);
-            
+			HumidityNoiseValues[x + y * (Size + 1)] = Noise->GetNoise(
+				(Position.X + HumidityPos) + x, 
+				(Position.Y + HumidityPos) + y
+			);
+			TemperatureNoiseValues[x + y * (Size + 1)] = Noise->GetNoise(
+				(Position.X + TemperaturePos) + x, 
+				(Position.Y + TemperaturePos) + y
+			);
 			// Scale noise to useful range (e.g., 0 to Size)
-			float terrainHeight = (noiseHeight + 1.0f) * 0.5f * Size;
+			float terrainHeight = (noiseHeight + 1.0f) * 0.5f * Size * HeightScale + HeightOffset;
             
 			for (int z = 0; z <= Size; z++)
 			{
@@ -151,15 +157,19 @@ void AGenerateSurface::March(const int X, const int Y, const int Z, TArray<float
 		MeshData.Triangles.Add(VertexCount + 2);
 		FVector VectorAB = b-a;
 		FVector VectorAC = c-a;
-		FVector normal = FVector::CrossProduct(VectorAC, VectorAB).GetSafeNormal();
+		FVector normal = FVector::CrossProduct(VectorAB, VectorAC).GetSafeNormal();
 		MeshData.Normals.Add(normal);
 		MeshData.Normals.Add(normal);
-		MeshData.Normals.Add(normal);
+		MeshData.Normals.Add(normal); 
 		VertexCount += 3;
 
 		MeshData.UV0.Add(GetUV(a, normal));
 		MeshData.UV0.Add(GetUV(b, normal));
 		MeshData.UV0.Add(GetUV(c, normal));
+
+		MeshData.Colors.Add(GetVertexColor(a, normal));
+		MeshData.Colors.Add(GetVertexColor(b, normal));
+		MeshData.Colors.Add(GetVertexColor(c, normal));
 	}
 }
 FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
@@ -186,26 +196,22 @@ FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
 		return FVector2D(Position.X, Position.Z) * UVScale;
 	}
 }
-FColor AGenerateSurface::GetColor(FVector Position, FVector Normal) const
+
+FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 {
-	FColor colorA = FColor::White;
-	FColor colorB = FColor(11,128,37);
-	FColor colorC = FColor(86, 97, 89);
-	float angle = FMath::Acos(FVector::DotProduct(Normal, FVector::UpVector));
-	// UE_LOG( LogTemp, Warning, TEXT("Angle: %f"), Position.Z);
-	if (angle > FMath::DegreesToRadians(45.0f))
+	const float VoxelHeight = Position.Z / 100.0f;
+	if (VoxelHeight <= SeaLevel)
 	{
-		return colorC;
+		return FColor(32, 96, 160);
 	}
-	
-	if (Position.Z < SurfaceLevel+ 10000.0f)
+
+	const float Slope = 1.0f - FMath::Clamp(FVector::DotProduct(Normal, FVector::UpVector), 0.0f, 1.0f);
+	if (Slope > 0.45f)
 	{
-		return colorB;
+		return FColor(96, 96, 96);
 	}
-	else
-	{
-		return colorA;
-	}
+
+	return FColor(70, 130, 60);
 }
 
 float AGenerateSurface::GetInterpolationOffset(const float V1, const float V2) const
@@ -234,14 +240,3 @@ void AGenerateSurface::ModifyVoxelData(FVector Position)
 		Voxels[Index] = Voxels[Index] > SurfaceLevel ? SurfaceLevel - 1.0f : SurfaceLevel + 1.0f;
 	}
 }
-
-#pragma optimize("", on)
-
-
-
-
-
-
-
-
-

@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-
-
 UENUM(BlueprintType)
 enum class ProceduralGenerationType : uint8
 {

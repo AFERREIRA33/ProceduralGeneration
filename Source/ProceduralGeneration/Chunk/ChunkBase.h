@@ -30,6 +30,19 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	float Frequency = 0.01f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise")
+	int Seed = 1337;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise", meta=(ClampMin="1", UIMin="1"))
+	int FractalOctaves = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise", meta=(ClampMin="0.0", UIMin="0.0"))
+	float FractalLacunarity = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise", meta=(ClampMin="0.0", UIMin="0.0", ClampMax="1.0", UIMax="1.0"))
+	float FractalGain = 0.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	ProceduralGenerationType GenerationType;
 	UFUNCTION(BlueprintCallable, Category="Chunk")
@@ -49,7 +62,7 @@ protected:
 	virtual void ModifyVoxelData(FVector Position) PURE_VIRTUAL(AChunkBase::RemoveVoxelData);
 
 	TObjectPtr<UProceduralMeshComponent> Mesh;
-	FastNoiseLite* Noise;
+	TUniquePtr<FastNoiseLite> Noise;
 	FChunkMeshData MeshData;
 	int VertexCount = 0;
 

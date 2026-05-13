@@ -17,24 +17,35 @@ public:
 	UPROPERTY(editAnywhere, BlueprintReadWrite)
 	int SurfaceLevel = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.0", UIMin="0.0"))
+	float HeightScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
+	float HeightOffset = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
+	float SeaLevel = 20.0f;
+
 private:
 
 	virtual ProceduralGenerationType SetGenerationType() override;
-	void Setup() override;
-	void Generate2DHeightMap(FVector Position) override;
-	void Generate3DHeightMap(FVector Position) override {};
-	void ModifyVoxelData(FVector Position) override;
+	virtual void Setup() override;
+	virtual void Generate2DHeightMap(FVector Position) override;
+	virtual void Generate3DHeightMap(FVector Position) override {};
+	virtual void ModifyVoxelData(FVector Position) override;
 	int GetVoxelIndex(const int X, const int Y, const int Z) const;
-	void GenerateMesh() override;
+	virtual void GenerateMesh() override;
 	void March(const int X, const int Y, const int Z, TArray<float> Cube);
 	float GetInterpolationOffset(const float V1, const float V2) const;
 	
 	FVector2D GetUV(FVector Position, FVector Normal) const;
-	FColor GetColor(FVector Position, FVector Normal) const;
-	FVector GetVoxelNormal(FVector vertex) const;
-	
-	TObjectPtr<UProceduralMeshComponent> Mesh;
+	FColor GetVertexColor(FVector Position, FVector Normal) const;
+	int HumidityPos = 1000000;
+	int TemperaturePos = -1000000;
 	TArray<float> Voxels;
+	TArray<float> HumidityNoiseValues;
+	TArray<float> TemperatureNoiseValues;
+
 	int TriangleOrder[3] = {0, 1, 2};
 	float Min = 0;
 	float Max = 0;
