@@ -65,6 +65,9 @@ void AFlyingPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerIn
 		}
 		if (CycleModeAction) EIC->BindAction(CycleModeAction, ETriggerEvent::Started, this, &AFlyingPlayerCharacter::HandleCycleMode);
 		if (ResetAction) EIC->BindAction(ResetAction, ETriggerEvent::Started, this, &AFlyingPlayerCharacter::HandleReset);
+		if (ToggleToolAction) EIC->BindAction(ToggleToolAction, ETriggerEvent::Started, this, &AFlyingPlayerCharacter::HandleToggleTool);
+		if (AdjustRadiusAction) EIC->BindAction(AdjustRadiusAction, ETriggerEvent::Triggered, this, &AFlyingPlayerCharacter::HandleAdjustRadius);
+		if (AdjustStrengthAction) EIC->BindAction(AdjustStrengthAction, ETriggerEvent::Triggered, this, &AFlyingPlayerCharacter::HandleAdjustStrength);
 	}
 }
 
@@ -119,4 +122,24 @@ void AFlyingPlayerCharacter::HandleReset(const FInputActionValue& Value)
 			T->ResetTerrain();
 		}
 	}
+}
+
+void AFlyingPlayerCharacter::HandleToggleTool(const FInputActionValue& Value)
+{
+	if (TerrainEditor) TerrainEditor->ToggleToolActive();
+}
+
+void AFlyingPlayerCharacter::HandleAdjustRadius(const FInputActionValue& Value)
+{
+	if (!TerrainEditor) return;
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (PC->IsInputKeyDown(EKeys::LeftShift) || PC->IsInputKeyDown(EKeys::RightShift)) return;
+	}
+	TerrainEditor->AdjustRadius(Value.Get<float>());
+}
+
+void AFlyingPlayerCharacter::HandleAdjustStrength(const FInputActionValue& Value)
+{
+	if (TerrainEditor) TerrainEditor->AdjustStrength(Value.Get<float>());
 }

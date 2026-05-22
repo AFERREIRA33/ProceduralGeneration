@@ -28,6 +28,12 @@ public:
 	UPROPERTY(EditAnywhere, Category="Terrain|Noise")
 	int32 NoiseSeed = 1337;
 
+	UPROPERTY(EditAnywhere, Category="Terrain|Density")
+	float DensityClampMin = -1.f;
+
+	UPROPERTY(EditAnywhere, Category="Terrain|Density")
+	float DensityClampMax = 1.f;
+
 	UPROPERTY(EditAnywhere, Category="Terrain|Material")
 	TObjectPtr<UMaterialInterface> Material;
 
@@ -44,6 +50,8 @@ public:
 	bool WorldToGrid(const FVector& World, FVector& OutGrid) const;
 	FVector GridToWorld(const FVector& Grid) const;
 
+	bool TraceDensityField(const FVector& WorldStart, const FVector& WorldDir, float MaxDist, FVector& OutHitPoint, FVector& OutNormal) const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -52,10 +60,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Terrain|Perf")
 	float RemeshInterval = 0.033f;
 
-private:
-	TArray<float> Densities;
-	TArray<float> OriginalDensities;
+	UPROPERTY(EditDefaultsOnly, Category="Terrain|Perf", meta=(ClampMin="8", ClampMax="64"))
+	int32 ChunkSize = 8;
 
+	UPROPERTY(EditAnywhere, Category="Terrain|Perf")
+	bool bDeferCollisionDuringEdit = true;
+
+public:
+	void BeginEditStroke();
+	void EndEditStroke();
+
+private:
 	struct FChunkInfo
 	{
 		FIntVector Min;
@@ -64,18 +79,24 @@ private:
 		bool bCreated;
 	};
 
-	TArray<FChunkInfo> Chunks;
-	TSet<int32> DirtyChunks;
-	float RemeshAccumulator = 0.f;
-
-	static constexpr int32 ChunkSize = 8;
-
 	struct FChunkBuildData
 	{
 		TArray<FVector> Vertices;
 		TArray<int32> Triangles;
 		TArray<FVector> Normals;
+		TArray<int32> EdgeToVertex;
 	};
+
+	TArray<float> Densities;
+	TArray<float> OriginalDensities;
+	TArray<FChunkInfo> Chunks;
+	TSet<int32> DirtyChunks;
+	TSet<int32> CollisionPendingChunks;
+	TArray<FChunkBuildData> CachedBuilds;
+	TArray<int32> CachedIndices;
+	FIntVector ChunkCount = FIntVector::ZeroValue;
+	float RemeshAccumulator = 0.f;
+	bool bInEditStroke = false;
 
 	void GenerateDensities();
 	void BuildChunks();
@@ -95,5 +116,7 @@ private:
 	}
 
 	void MarkRegionDirty(const FIntVector& MinCell, const FIntVector& MaxCell);
+	void MarkCellDirty(int32 x, int32 y, int32 z);
 	FVector GradientAtCorner(int32 x, int32 y, int32 z) const;
+	float SampleDensityTrilinear(float gx, float gy, float gz) const;
 };

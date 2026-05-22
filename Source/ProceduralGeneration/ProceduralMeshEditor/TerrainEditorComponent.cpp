@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
+#include "Kismet/GameplayStatics.h"
 
 UTerrainEditorComponent::UTerrainEditorComponent()
 {
@@ -13,6 +14,7 @@ UTerrainEditorComponent::UTerrainEditorComponent()
 void UTerrainEditorComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	bToolActive = bStartActive;
 }
 
 void UTerrainEditorComponent::SetMode(ETerrainBrushMode NewMode)
@@ -29,8 +31,42 @@ void UTerrainEditorComponent::CycleMode()
 
 void UTerrainEditorComponent::SetEditing(bool bEditing)
 {
-	bIsEditing = bEditing;
-	if (!bEditing) bHasFlattenTarget = false;
+	bIsEditing = bEditing && bToolActive;
+	if (!bIsEditing)
+	{
+		bHasFlattenTarget = false;
+		if (bStrokeActive && CurrentEditTerrain.IsValid())
+		{
+			CurrentEditTerrain->EndEditStroke();
+		}
+		CurrentEditTerrain.Reset();
+		bStrokeActive = false;
+	}
+}
+
+void UTerrainEditorComponent::SetToolActive(bool bActive)
+{
+	bToolActive = bActive;
+	if (!bToolActive)
+	{
+		bIsEditing = false;
+		bHasFlattenTarget = false;
+	}
+}
+
+void UTerrainEditorComponent::ToggleToolActive()
+{
+	SetToolActive(!bToolActive);
+}
+
+void UTerrainEditorComponent::AdjustRadius(float Delta)
+{
+	BrushRadius = FMath::Clamp(BrushRadius + Delta * BrushRadiusStep, BrushRadiusMin, BrushRadiusMax);
+}
+
+void UTerrainEditorComponent::AdjustStrength(float Delta)
+{
+	BrushStrength = FMath::Clamp(BrushStrength + Delta * BrushStrengthStep, BrushStrengthMin, BrushStrengthMax);
 }
 
 FString UTerrainEditorComponent::GetCurrentModeName() const
@@ -47,12 +83,13 @@ FString UTerrainEditorComponent::GetCurrentModeName() const
 
 FLinearColor UTerrainEditorComponent::GetCurrentModeColor() const
 {
+	if (!bToolActive) return InactiveColor;
 	switch (Mode)
 	{
-	case ETerrainBrushMode::Add: return FLinearColor(0.2f, 0.9f, 0.2f);
-	case ETerrainBrushMode::Subtract: return FLinearColor(0.9f, 0.2f, 0.2f);
-	case ETerrainBrushMode::Flatten: return FLinearColor(0.95f, 0.85f, 0.2f);
-	case ETerrainBrushMode::Smooth: return FLinearColor(0.3f, 0.6f, 1.0f);
+	case ETerrainBrushMode::Add: return AddColor;
+	case ETerrainBrushMode::Subtract: return SubtractColor;
+	case ETerrainBrushMode::Flatten: return FlattenColor;
+	case ETerrainBrushMode::Smooth: return SmoothColor;
 	}
 	return FLinearColor::White;
 }
@@ -67,20 +104,42 @@ bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AProceduralTer
 	if (!Cam) return false;
 
 	const FVector Start = Cam->GetComponentLocation();
-	const FVector End = Start + Cam->GetForwardVector() * MaxTraceDistance;
+	const FVector Dir = Cam->GetForwardVector();
 
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(OwnerPawn);
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AProceduralTerrain::StaticClass(), Found);
 
-	if (!GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, Params)) return false;
-
-	OutTerrain = Cast<AProceduralTerrain>(OutHit.GetActor());
-	return OutTerrain != nullptr;
+	float BestDist = MaxTraceDistance;
+	bool bHitAny = false;
+	for (AActor* A : Found)
+	{
+		AProceduralTerrain* T = Cast<AProceduralTerrain>(A);
+		if (!T) continue;
+		FVector HitPos, Normal;
+		if (T->TraceDensityField(Start, Dir, MaxTraceDistance, HitPos, Normal))
+		{
+			const float D = (HitPos - Start).Size();
+			if (D < BestDist)
+			{
+				BestDist = D;
+				OutHit.ImpactPoint = HitPos;
+				OutHit.Location = HitPos;
+				OutHit.ImpactNormal = Normal;
+				OutHit.Normal = Normal;
+				OutHit.Distance = D;
+				OutTerrain = T;
+				bHitAny = true;
+			}
+		}
+	}
+	return bHitAny;
 }
 
 void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (!bToolActive) return;
 
 	FHitResult Hit;
 	AProceduralTerrain* Terrain = nullptr;
@@ -89,12 +148,19 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	if (bHit)
 	{
 		const FColor C = GetCurrentModeColor().ToFColor(true);
-		DrawDebugSphere(GetWorld(), Hit.ImpactPoint, BrushRadius, 24, C, false, 0.f, 0, 2.f);
+		DrawDebugSphere(GetWorld(), Hit.ImpactPoint, BrushRadius, CursorSphereSegments, C, false, 0.f, 0, CursorLineThickness);
 	}
 
 	if (!bIsEditing || !bHit || !Terrain) return;
 
-	const float Step = BrushStrength * DeltaTime;
+	if (!bStrokeActive)
+	{
+		Terrain->BeginEditStroke();
+		CurrentEditTerrain = Terrain;
+		bStrokeActive = true;
+	}
+
+	const float Step = FMath::Min(BrushStrength * DeltaTime, MaxStrengthPerStep);
 
 	switch (Mode)
 	{

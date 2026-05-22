@@ -54,6 +54,15 @@ public:
 	TObjectPtr<UInputAction> ResetAction;
 
 	UPROPERTY(EditAnywhere, Category="Input")
+	TObjectPtr<UInputAction> ToggleToolAction;
+
+	UPROPERTY(EditAnywhere, Category="Input")
+	TObjectPtr<UInputAction> AdjustRadiusAction;
+
+	UPROPERTY(EditAnywhere, Category="Input")
+	TObjectPtr<UInputAction> AdjustStrengthAction;
+
+	UPROPERTY(EditAnywhere, Category="Input")
 	float LookSensitivity = 1.f;
 
 protected:
@@ -68,4 +77,7 @@ private:
 	void HandleClickEnd(const FInputActionValue& Value);
 	void HandleCycleMode(const FInputActionValue& Value);
 	void HandleReset(const FInputActionValue& Value);
+	void HandleToggleTool(const FInputActionValue& Value);
+	void HandleAdjustRadius(const FInputActionValue& Value);
+	void HandleAdjustStrength(const FInputActionValue& Value);
 };
