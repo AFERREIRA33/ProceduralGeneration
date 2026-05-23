@@ -144,17 +144,7 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 		const int32 Edges = CubeEdgeFlags[CubeIndex];
 		if (Edges == 0) continue;
 
-		FVector CornerGrads[8];
-		for (int32 c = 0; c < 8; ++c)
-		{
-			const int32 ox = x + VertexOffset[c][0];
-			const int32 oy = y + VertexOffset[c][1];
-			const int32 oz = z + VertexOffset[c][2];
-			CornerGrads[c] = GradientAtCorner(ox, oy, oz);
-		}
-
 		FVector EdgeVerts[12];
-		FVector EdgeNormals[12];
 		for (int32 e = 0; e < 12; ++e)
 		{
 			if (!(Edges & (1 << e))) continue;
@@ -165,7 +155,6 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			const float denom = vb - va;
 			const float t = FMath::IsNearlyZero(denom) ? 0.5f : (-va / denom);
 			EdgeVerts[e] = CornerPos[a] + (CornerPos[b] - CornerPos[a]) * t;
-			EdgeNormals[e] = FMath::Lerp(CornerGrads[a], CornerGrads[b], t).GetSafeNormal();
 		}
 
 		for (int32 i = 0; i < 16; i += 3)
@@ -178,9 +167,6 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			const FVector A = EdgeVerts[t0];
 			const FVector B = EdgeVerts[t1];
 			const FVector C = EdgeVerts[t2];
-			const FVector Na = EdgeNormals[t0];
-			const FVector Nb = EdgeNormals[t1];
-			const FVector Nc = EdgeNormals[t2];
 
 			const FVector FaceNormal = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
 			const FColor FaceColor = GetVertexColor(A, FaceNormal);
@@ -191,9 +177,9 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			Out.Vertices.Add(A);
 			Out.Vertices.Add(B);
 			Out.Vertices.Add(C);
-			Out.Normals.Add(Na);
-			Out.Normals.Add(Nb);
-			Out.Normals.Add(Nc);
+			Out.Normals.Add(FaceNormal);
+			Out.Normals.Add(FaceNormal);
+			Out.Normals.Add(FaceNormal);
 			Out.Triangles.Add(VertexCounter + 0);
 			Out.Triangles.Add(VertexCounter + 1);
 			Out.Triangles.Add(VertexCounter + 2);
