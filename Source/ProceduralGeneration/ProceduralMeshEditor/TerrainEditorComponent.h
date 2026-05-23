@@ -4,7 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "TerrainEditorComponent.generated.h"
 
-class AProceduralTerrain;
+class AGenerateSurface;
 
 UENUM(BlueprintType)
 enum class ETerrainBrushMode : uint8
@@ -123,7 +123,7 @@ private:
 	float FlattenTargetZ = 0.f;
 	bool bHasFlattenTarget = false;
 	bool bStrokeActive = false;
-	TWeakObjectPtr<AProceduralTerrain> CurrentEditTerrain;
+	TArray<TWeakObjectPtr<AGenerateSurface>> StrokeTouchedTerrains;
 
-	bool TraceFromCamera(FHitResult& OutHit, AProceduralTerrain*& OutTerrain) const;
+	bool TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain) const;
 };

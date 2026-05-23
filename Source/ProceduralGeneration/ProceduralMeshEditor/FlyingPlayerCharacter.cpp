@@ -1,6 +1,6 @@
 #include "FlyingPlayerCharacter.h"
 #include "TerrainEditorComponent.h"
-#include "ProceduralTerrain.h"
+#include "ProceduralGeneration/SurfaceGenerator/GenerateSurface.h"
 #include "Kismet/GameplayStatics.h"
 #include "Camera/CameraComponent.h"
 #include "Components/SphereComponent.h"
@@ -114,12 +114,12 @@ void AFlyingPlayerCharacter::HandleCycleMode(const FInputActionValue& Value)
 void AFlyingPlayerCharacter::HandleReset(const FInputActionValue& Value)
 {
 	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AProceduralTerrain::StaticClass(), Found);
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), Found);
 	for (AActor* A : Found)
 	{
-		if (AProceduralTerrain* T = Cast<AProceduralTerrain>(A))
+		if (AGenerateSurface* T = Cast<AGenerateSurface>(A))
 		{
-			T->ResetTerrain();
+			T->ResetToOriginal();
 		}
 	}
 }

@@ -1,5 +1,5 @@
 #include "TerrainEditorComponent.h"
-#include "ProceduralTerrain.h"
+#include "ProceduralGeneration/SurfaceGenerator/GenerateSurface.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -35,12 +35,15 @@ void UTerrainEditorComponent::SetEditing(bool bEditing)
 	if (!bIsEditing)
 	{
 		bHasFlattenTarget = false;
-		if (bStrokeActive && CurrentEditTerrain.IsValid())
+		if (bStrokeActive)
 		{
-			CurrentEditTerrain->EndEditStroke();
+			for (auto& W : StrokeTouchedTerrains)
+			{
+				if (W.IsValid()) W->EndEditStroke();
+			}
+			StrokeTouchedTerrains.Reset();
+			bStrokeActive = false;
 		}
-		CurrentEditTerrain.Reset();
-		bStrokeActive = false;
 	}
 }
 
@@ -94,7 +97,7 @@ FLinearColor UTerrainEditorComponent::GetCurrentModeColor() const
 	return FLinearColor::White;
 }
 
-bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AProceduralTerrain*& OutTerrain) const
+bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain) const
 {
 	OutTerrain = nullptr;
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
@@ -107,13 +110,13 @@ bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AProceduralTer
 	const FVector Dir = Cam->GetForwardVector();
 
 	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AProceduralTerrain::StaticClass(), Found);
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), Found);
 
 	float BestDist = MaxTraceDistance;
 	bool bHitAny = false;
 	for (AActor* A : Found)
 	{
-		AProceduralTerrain* T = Cast<AProceduralTerrain>(A);
+		AGenerateSurface* T = Cast<AGenerateSurface>(A);
 		if (!T) continue;
 		FVector HitPos, Normal;
 		if (T->TraceDensityField(Start, Dir, MaxTraceDistance, HitPos, Normal))
@@ -142,7 +145,7 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	if (!bToolActive) return;
 
 	FHitResult Hit;
-	AProceduralTerrain* Terrain = nullptr;
+	AGenerateSurface* Terrain = nullptr;
 	const bool bHit = TraceFromCamera(Hit, Terrain);
 
 	if (bHit)
@@ -151,13 +154,44 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		DrawDebugSphere(GetWorld(), Hit.ImpactPoint, BrushRadius, CursorSphereSegments, C, false, 0.f, 0, CursorLineThickness);
 	}
 
-	if (!bIsEditing || !bHit || !Terrain) return;
+	if (!bIsEditing || !bHit) return;
+
+	const FBox BrushAABB(Hit.ImpactPoint - FVector(BrushRadius), Hit.ImpactPoint + FVector(BrushRadius));
+
+	TArray<AActor*> AllChunks;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), AllChunks);
+
+	TArray<AGenerateSurface*> Targets;
+	Targets.Reserve(AllChunks.Num());
+	for (AActor* A : AllChunks)
+	{
+		AGenerateSurface* T = Cast<AGenerateSurface>(A);
+		if (!T) continue;
+		if (T->GetWorldAABB().Intersect(BrushAABB))
+		{
+			Targets.Add(T);
+		}
+	}
+
+	if (Targets.Num() == 0) return;
 
 	if (!bStrokeActive)
 	{
-		Terrain->BeginEditStroke();
-		CurrentEditTerrain = Terrain;
 		bStrokeActive = true;
+	}
+
+	for (AGenerateSurface* T : Targets)
+	{
+		bool bAlreadyTouched = false;
+		for (auto& W : StrokeTouchedTerrains)
+		{
+			if (W.Get() == T) { bAlreadyTouched = true; break; }
+		}
+		if (!bAlreadyTouched)
+		{
+			T->BeginEditStroke();
+			StrokeTouchedTerrains.Add(T);
+		}
 	}
 
 	const float Step = FMath::Min(BrushStrength * DeltaTime, MaxStrengthPerStep);
@@ -165,10 +199,10 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	switch (Mode)
 	{
 	case ETerrainBrushMode::Add:
-		Terrain->ApplyBrush(Hit.ImpactPoint, BrushRadius, -Step);
+		for (AGenerateSurface* T : Targets) T->ApplyBrush(Hit.ImpactPoint, BrushRadius, -Step);
 		break;
 	case ETerrainBrushMode::Subtract:
-		Terrain->ApplyBrush(Hit.ImpactPoint, BrushRadius, +Step);
+		for (AGenerateSurface* T : Targets) T->ApplyBrush(Hit.ImpactPoint, BrushRadius, +Step);
 		break;
 	case ETerrainBrushMode::Flatten:
 		if (!bHasFlattenTarget)
@@ -176,10 +210,12 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 			FlattenTargetZ = Hit.ImpactPoint.Z;
 			bHasFlattenTarget = true;
 		}
-		Terrain->ApplyFlatten(Hit.ImpactPoint, BrushRadius, FlattenTargetZ, FMath::Clamp(Step * 0.5f, 0.f, 1.f));
+		for (AGenerateSurface* T : Targets)
+			T->ApplyFlatten(Hit.ImpactPoint, BrushRadius, FlattenTargetZ, FMath::Clamp(Step * 0.5f, 0.f, 1.f));
 		break;
 	case ETerrainBrushMode::Smooth:
-		Terrain->ApplySmooth(Hit.ImpactPoint, BrushRadius, FMath::Clamp(Step * 0.3f, 0.f, 1.f));
+		for (AGenerateSurface* T : Targets)
+			T->ApplySmooth(Hit.ImpactPoint, BrushRadius, FMath::Clamp(Step * 0.3f, 0.f, 1.f));
 		break;
 	}
 }

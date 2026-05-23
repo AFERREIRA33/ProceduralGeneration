@@ -1,6 +1,6 @@
 #include "ProceduralTerrain.h"
 #include "MarchingCubesTables.h"
-#include "../../Utils/FastNoiseLite.h"
+#include "../Utils/FastNoiseLite.h"
 #include "Async/ParallelFor.h"
 
 AProceduralTerrain::AProceduralTerrain()

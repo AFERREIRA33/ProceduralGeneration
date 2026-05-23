@@ -26,7 +26,74 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
 	float SeaLevel = 20.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Edit")
+	float DensityClampMin = -1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Edit")
+	float DensityClampMax = 1.f;
+
+	UPROPERTY(EditAnywhere, Category="Edit|Perf")
+	float RemeshInterval = 0.033f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Edit|Perf", meta=(ClampMin="4", ClampMax="32"))
+	int32 SubChunkSize = 32;
+
+	UPROPERTY(EditAnywhere, Category="Edit|Perf")
+	bool bDeferCollisionDuringEdit = true;
+
+	AGenerateSurface();
+
+	void ApplyBrush(const FVector& WorldCenter, float Radius, float Delta);
+	void ApplyFlatten(const FVector& WorldCenter, float Radius, float TargetWorldZ, float Strength);
+	void ApplySmooth(const FVector& WorldCenter, float Radius, float Strength);
+	bool TraceDensityField(const FVector& WorldStart, const FVector& WorldDir, float MaxDist, FVector& OutHitPoint, FVector& OutNormal) const;
+
+	void BeginEditStroke();
+	void EndEditStroke();
+	void ResetToOriginal();
+	FBox GetWorldAABB() const;
+
+	virtual void StartGeneration() override;
+	virtual void Tick(float DeltaTime) override;
+
 private:
+
+	struct FSubChunk
+	{
+		FIntVector Min;
+		FIntVector Max;
+		int32 SectionIndex;
+		bool bCreated;
+	};
+
+	struct FSubChunkBuildData
+	{
+		TArray<FVector> Vertices;
+		TArray<int32> Triangles;
+		TArray<FVector> Normals;
+		TArray<FVector2D> UV0;
+		TArray<FColor> Colors;
+	};
+
+	TArray<FSubChunk> SubChunks;
+	TSet<int32> DirtySubChunks;
+	TSet<int32> CollisionPendingSubChunks;
+	FIntVector SubChunkCount = FIntVector::ZeroValue;
+	TArray<FSubChunkBuildData> CachedBuilds;
+	TArray<int32> CachedIndices;
+	float RemeshAccumulator = 0.f;
+	bool bInEditStroke = false;
+	bool bDirtyDuringStroke = false;
+	TArray<float> OriginalVoxels;
+
+	void BuildSubChunks();
+	void RebuildAllSubChunks();
+	void BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) const;
+	void UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data);
+	void FlushDirtySubChunks();
+	void MarkVoxelDirty(int32 x, int32 y, int32 z);
+	FVector GradientAtCorner(int32 x, int32 y, int32 z) const;
+	float SampleDensityTrilinear(float lx, float ly, float lz) const;
 
 	virtual ProceduralGenerationType SetGenerationType() override;
 	virtual void Setup() override;
