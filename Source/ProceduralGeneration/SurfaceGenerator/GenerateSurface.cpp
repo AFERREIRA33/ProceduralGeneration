@@ -225,6 +225,7 @@ void AGenerateSurface::UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data)
 
 	const bool bWithCollision = !(bDeferCollisionDuringEdit && bInEditStroke);
 	Mesh->CreateMeshSection(Info.SectionIndex, Data.Vertices, Data.Triangles, Data.Normals, Data.UV0, Data.Colors, EmptyTangents, bWithCollision);
+	if (Material) Mesh->SetMaterial(Info.SectionIndex, Material);
 	Info.bCreated = true;
 
 	if (bWithCollision)
