@@ -25,6 +25,7 @@ void UTerrainEditorComponent::SetMode(ETerrainBrushMode NewMode)
 
 void UTerrainEditorComponent::CycleMode()
 {
+	if (!bToolActive) return;
 	const uint8 Next = ((uint8)Mode + 1) % 4;
 	SetMode((ETerrainBrushMode)Next);
 }
@@ -97,7 +98,21 @@ FLinearColor UTerrainEditorComponent::GetCurrentModeColor() const
 	return FLinearColor::White;
 }
 
-bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain) const
+void UTerrainEditorComponent::RefreshTerrainCacheIfNeeded(float DeltaTime)
+{
+	TerrainCacheAge += DeltaTime;
+	if (TerrainCacheAge < 1.0f && CachedTerrains.Num() > 0) return;
+	TerrainCacheAge = 0.f;
+	CachedTerrains.Reset();
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), Found);
+	for (AActor* A : Found)
+	{
+		if (AGenerateSurface* T = Cast<AGenerateSurface>(A)) CachedTerrains.Add(T);
+	}
+}
+
+bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain)
 {
 	OutTerrain = nullptr;
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
@@ -108,18 +123,33 @@ bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurfa
 
 	const FVector Start = Cam->GetComponentLocation();
 	const FVector Dir = Cam->GetForwardVector();
+	const FVector End = Start + Dir * MaxTraceDistance;
 
-	TArray<AActor*> Found;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), Found);
+	TArray<TPair<float, AGenerateSurface*>, TInlineAllocator<16>> Candidates;
+	for (auto& W : CachedTerrains)
+	{
+		AGenerateSurface* T = W.Get();
+		if (!T) continue;
+		const FBox AABB = T->GetWorldAABB();
+		FVector HitLoc, HitNorm;
+		float HitTime;
+		if (!FMath::LineExtentBoxIntersection(AABB, Start, End, FVector::ZeroVector, HitLoc, HitNorm, HitTime))
+			continue;
+		Candidates.Emplace(HitTime * MaxTraceDistance, T);
+	}
+
+	Candidates.Sort([](const TPair<float, AGenerateSurface*>& A, const TPair<float, AGenerateSurface*>& B)
+	{
+		return A.Key < B.Key;
+	});
 
 	float BestDist = MaxTraceDistance;
 	bool bHitAny = false;
-	for (AActor* A : Found)
+	for (const TPair<float, AGenerateSurface*>& C : Candidates)
 	{
-		AGenerateSurface* T = Cast<AGenerateSurface>(A);
-		if (!T) continue;
+		if (C.Key >= BestDist) break;
 		FVector HitPos, Normal;
-		if (T->TraceDensityField(Start, Dir, MaxTraceDistance, HitPos, Normal))
+		if (C.Value->TraceDensityField(Start, Dir, MaxTraceDistance, HitPos, Normal))
 		{
 			const float D = (HitPos - Start).Size();
 			if (D < BestDist)
@@ -130,7 +160,7 @@ bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurfa
 				OutHit.ImpactNormal = Normal;
 				OutHit.Normal = Normal;
 				OutHit.Distance = D;
-				OutTerrain = T;
+				OutTerrain = C.Value;
 				bHitAny = true;
 			}
 		}
@@ -144,9 +174,42 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 	if (!bToolActive) return;
 
+	RefreshTerrainCacheIfNeeded(DeltaTime);
+
+	TraceAccumulator += DeltaTime;
+
 	FHitResult Hit;
 	AGenerateSurface* Terrain = nullptr;
-	const bool bHit = TraceFromCamera(Hit, Terrain);
+	bool bHit = false;
+
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	UCameraComponent* Cam = OwnerPawn ? OwnerPawn->FindComponentByClass<UCameraComponent>() : nullptr;
+	const FVector CamPos = Cam ? Cam->GetComponentLocation() : FVector::ZeroVector;
+	const FVector CamDir = Cam ? Cam->GetForwardVector() : FVector::ForwardVector;
+
+	const bool bCamMoved = !bHasLastTrace
+		|| FVector::DistSquared(CamPos, LastTraceCamPos) > TraceCamDeltaThreshold * TraceCamDeltaThreshold
+		|| FVector::DotProduct(CamDir, LastTraceCamDir) < 0.9999f;
+
+	const bool bDoTrace = bIsEditing || !bHasLastTrace || (TraceAccumulator >= TraceMinInterval && bCamMoved);
+
+	if (bDoTrace)
+	{
+		bHit = TraceFromCamera(Hit, Terrain);
+		LastHit = Hit;
+		LastHitTerrain = Terrain;
+		bLastTraceHit = bHit;
+		bHasLastTrace = true;
+		LastTraceCamPos = CamPos;
+		LastTraceCamDir = CamDir;
+		TraceAccumulator = 0.f;
+	}
+	else
+	{
+		bHit = bLastTraceHit;
+		Hit = LastHit;
+		Terrain = LastHitTerrain.Get();
+	}
 
 	if (bHit)
 	{
@@ -158,14 +221,11 @@ void UTerrainEditorComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 	const FBox BrushAABB(Hit.ImpactPoint - FVector(BrushRadius), Hit.ImpactPoint + FVector(BrushRadius));
 
-	TArray<AActor*> AllChunks;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AGenerateSurface::StaticClass(), AllChunks);
-
 	TArray<AGenerateSurface*> Targets;
-	Targets.Reserve(AllChunks.Num());
-	for (AActor* A : AllChunks)
+	Targets.Reserve(CachedTerrains.Num());
+	for (auto& W : CachedTerrains)
 	{
-		AGenerateSurface* T = Cast<AGenerateSurface>(A);
+		AGenerateSurface* T = W.Get();
 		if (!T) continue;
 		if (T->GetWorldAABB().Intersect(BrushAABB))
 		{

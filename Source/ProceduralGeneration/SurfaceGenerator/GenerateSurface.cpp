@@ -2,6 +2,7 @@
 #include"ProceduralGeneration/Utils/FastNoiseLite.h"
 #include "ProceduralMeshComponent.h"
 #include "Async/ParallelFor.h"
+#include "Async/Async.h"
 
 static const float kVoxelScale = 100.f;
 
@@ -12,6 +13,7 @@ AGenerateSurface::AGenerateSurface()
 	{
 		Mesh->bUseAsyncCooking = true;
 		Mesh->bUseComplexAsSimpleCollision = true;
+		Mesh->SetCanEverAffectNavigation(false);
 	}
 }
 
@@ -25,22 +27,175 @@ void AGenerateSurface::StartGeneration()
 	Noise->SetFractalLacunarity(FractalLacunarity);
 	Noise->SetFractalGain(FractalGain);
 
+	if (!BiomeNoise.IsValid()) BiomeNoise = MakeUnique<FastNoiseLite>();
+	BiomeNoise->SetSeed(Seed + 777);
+	BiomeNoise->SetFrequency(BiomeFrequency);
+	BiomeNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	BiomeNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	BiomeNoise->SetFractalOctaves(1);
+
+	if (!ContinentNoise.IsValid()) ContinentNoise = MakeUnique<FastNoiseLite>();
+	ContinentNoise->SetSeed(Seed + 4242);
+	ContinentNoise->SetFrequency(ContinentFrequency);
+	ContinentNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	ContinentNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	ContinentNoise->SetFractalOctaves(2);
+
+	if (!RiverNoise.IsValid()) RiverNoise = MakeUnique<FastNoiseLite>();
+	RiverNoise->SetSeed(Seed + 9001);
+	RiverNoise->SetFrequency(RiverFrequency);
+	RiverNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	RiverNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	RiverNoise->SetFractalOctaves(2);
+
 	GenerationType = SetGenerationType();
 	Setup();
+
+	const double T0 = FPlatformTime::Seconds();
 	Generate2DHeightMap(GetActorLocation() / kVoxelScale);
+	const double T1 = FPlatformTime::Seconds();
 
 	if (Material) Mesh->SetMaterial(0, Material);
 
 	BuildSubChunks();
 	RebuildAllSubChunks();
+	const double T2 = FPlatformTime::Seconds();
+
+	UE_LOG(LogTemp, Display, TEXT("[PERF CHUNK] voxels=%.2fms mesh=%.2fms total=%.2fms collision=%d"),
+		(T1 - T0) * 1000.0, (T2 - T1) * 1000.0, (T2 - T0) * 1000.0, bCollisionEnabled ? 1 : 0);
+}
+
+void AGenerateSurface::SetPendingCaveData(TArray<FCaveCarveOp>&& Ops, float MinRoof)
+{
+	PendingCaveOps = MoveTemp(Ops);
+	PendingCaveMinRoof = MinRoof;
+}
+
+void AGenerateSurface::StartGenerationAsync()
+{
+	Noise->SetSeed(Seed);
+	Noise->SetFrequency(Frequency);
+	Noise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	Noise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	Noise->SetFractalOctaves(FractalOctaves);
+	Noise->SetFractalLacunarity(FractalLacunarity);
+	Noise->SetFractalGain(FractalGain);
+
+	if (!BiomeNoise.IsValid()) BiomeNoise = MakeUnique<FastNoiseLite>();
+	BiomeNoise->SetSeed(Seed + 777);
+	BiomeNoise->SetFrequency(BiomeFrequency);
+	BiomeNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	BiomeNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	BiomeNoise->SetFractalOctaves(1);
+
+	if (!ContinentNoise.IsValid()) ContinentNoise = MakeUnique<FastNoiseLite>();
+	ContinentNoise->SetSeed(Seed + 4242);
+	ContinentNoise->SetFrequency(ContinentFrequency);
+	ContinentNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	ContinentNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	ContinentNoise->SetFractalOctaves(2);
+
+	if (!RiverNoise.IsValid()) RiverNoise = MakeUnique<FastNoiseLite>();
+	RiverNoise->SetSeed(Seed + 9001);
+	RiverNoise->SetFrequency(RiverFrequency);
+	RiverNoise->SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	RiverNoise->SetFractalType(FastNoiseLite::FractalType_FBm);
+	RiverNoise->SetFractalOctaves(2);
+
+	GenerationType = SetGenerationType();
+	if (Material) Mesh->SetMaterial(0, Material);
+
+	KickAsyncBuild(true);
+}
+
+void AGenerateSurface::KickAsyncBuild(bool bGenVoxels)
+{
+	if (bGenerating) return;
+	bGenerating = true;
+	GenChunkOrigin = GetActorLocation();
+
+	TWeakObjectPtr<AGenerateSurface> WeakThis(this);
+	const bool bGen = bGenVoxels;
+	Async(EAsyncExecution::ThreadPool, [WeakThis, bGen]()
+	{
+		AGenerateSurface* Self = WeakThis.Get();
+		if (!Self) return;
+		Self->BuildChunkDataAsync(bGen);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis]()
+		{
+			if (AGenerateSurface* S = WeakThis.Get())
+			{
+				S->FinishGenerationGameThread();
+			}
+		});
+	});
+}
+
+void AGenerateSurface::BuildChunkDataAsync(bool bGenVoxels)
+{
+	if (bGenVoxels)
+	{
+		Setup();
+		Generate2DHeightMap(GenChunkOrigin / kVoxelScale);
+		ApplyPendingCavesGenTime();
+		BuildSubChunks();
+	}
+
+	const int32 N = SubChunks.Num();
+	if (N == 0) return;
+	if (CachedBuilds.Num() < N) CachedBuilds.SetNum(N);
+	ParallelFor(N, [this](int32 i)
+	{
+		BuildSubChunkData(i, CachedBuilds[i]);
+	});
+}
+
+void AGenerateSurface::ApplyPendingCavesGenTime()
+{
+	for (const FCaveCarveOp& Op : PendingCaveOps)
+	{
+		CarveSphereImpl(GenChunkOrigin, Op.WorldCenter, Op.WorldRadius, Op.bDistorted, Op.MinRoof, false);
+	}
+}
+
+void AGenerateSurface::ApplyPendingCavesSync()
+{
+	for (const FCaveCarveOp& Op : PendingCaveOps)
+	{
+		CarveCaveSphere(Op.WorldCenter, Op.WorldRadius, Op.bDistorted, Op.MinRoof);
+	}
+}
+
+void AGenerateSurface::FinishGenerationGameThread()
+{
+	const double T0 = FPlatformTime::Seconds();
+
+	Mesh->ClearAllMeshSections();
+
+	const int32 N = SubChunks.Num();
+	for (int32 i = 0; i < N; ++i)
+	{
+		UploadSubChunk(i, CachedBuilds[i]);
+	}
+
+	if (Material) Mesh->SetMaterial(0, Material);
+	Mesh->SetCastShadow(bCastShadows);
+
+	DirtySubChunks.Reset();
+	bGenerating = false;
+
+	const double UploadMs = (FPlatformTime::Seconds() - T0) * 1000.0;
+	UE_LOG(LogTemp, Display, TEXT("[PERF ASYNC] gamethread upload=%.2fms subchunks=%d collision=%d"), UploadMs, N, bCollisionEnabled ? 1 : 0);
 }
 
 void AGenerateSurface::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (bGenerating) return;
 	if (DirtySubChunks.Num() == 0) return;
 	RemeshAccumulator += DeltaTime;
-	if (RemeshAccumulator < RemeshInterval) return;
+	const float Interval = bInEditStroke ? RemeshIntervalDuringStroke : RemeshInterval;
+	if (RemeshAccumulator < Interval) return;
 	RemeshAccumulator = 0.f;
 	FlushDirtySubChunks();
 }
@@ -88,7 +243,7 @@ void AGenerateSurface::RebuildAllSubChunks()
 	}
 
 	if (Material) Mesh->SetMaterial(0, Material);
-	Mesh->SetCastShadow(true);
+	Mesh->SetCastShadow(bCastShadows);
 }
 
 FVector AGenerateSurface::GradientAtCorner(int32 x, int32 y, int32 z) const
@@ -115,14 +270,25 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 	Out.UV0.Reset();
 	Out.Colors.Reset();
 
-	const int32 EstReserve = SubChunkSize * SubChunkSize * SubChunkSize * 3;
+	const int32 EstReserve = SubChunkSize * SubChunkSize * 4;
 	Out.Vertices.Reserve(EstReserve);
-	Out.Triangles.Reserve(EstReserve);
+	Out.Triangles.Reserve(EstReserve * 3);
 	Out.Normals.Reserve(EstReserve);
 	Out.UV0.Reserve(EstReserve);
 	Out.Colors.Reserve(EstReserve);
 
-	int32 VertexCounter = 0;
+	static const int8 EdgeOffsetTable[12][4] =
+	{
+		{0,0,0,0}, {1,0,0,1}, {0,1,0,0}, {0,0,0,1},
+		{0,0,1,0}, {1,0,1,1}, {0,1,1,0}, {0,0,1,1},
+		{0,0,0,2}, {1,0,0,2}, {1,1,0,2}, {0,1,0,2}
+	};
+
+	const int32 EdgeGridSize = SubChunkSize + 1;
+	const int32 NumEdgeIds = EdgeGridSize * EdgeGridSize * EdgeGridSize * 3;
+	TArray<int32>& EdgeToVertex = Out.EdgeToVertex;
+	EdgeToVertex.SetNumUninitialized(NumEdgeIds);
+	FMemory::Memset(EdgeToVertex.GetData(), 0xFF, NumEdgeIds * sizeof(int32));
 
 	for (int32 z = Info.Min.Z; z < Info.Max.Z; ++z)
 	for (int32 y = Info.Min.Y; y < Info.Max.Y; ++y)
@@ -144,17 +310,60 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 		const int32 Edges = CubeEdgeFlags[CubeIndex];
 		if (Edges == 0) continue;
 
-		FVector EdgeVerts[12];
+		FVector CornerGrads[8];
+		bool bGradsComputed = false;
+
+		const int32 lcx = x - Info.Min.X;
+		const int32 lcy = y - Info.Min.Y;
+		const int32 lcz = z - Info.Min.Z;
+
+		int32 EdgeVertIndex[12];
 		for (int32 e = 0; e < 12; ++e)
 		{
-			if (!(Edges & (1 << e))) continue;
+			if (!(Edges & (1 << e))) { EdgeVertIndex[e] = -1; continue; }
+
+			const int32 ex = lcx + EdgeOffsetTable[e][0];
+			const int32 ey = lcy + EdgeOffsetTable[e][1];
+			const int32 ez = lcz + EdgeOffsetTable[e][2];
+			const int32 axis = EdgeOffsetTable[e][3];
+			const int32 Key = ((ex * EdgeGridSize + ey) * EdgeGridSize + ez) * 3 + axis;
+
+			const int32 ExistingIdx = EdgeToVertex[Key];
+			if (ExistingIdx != -1)
+			{
+				EdgeVertIndex[e] = ExistingIdx;
+				continue;
+			}
+
+			if (!bGradsComputed)
+			{
+				for (int32 c = 0; c < 8; ++c)
+				{
+					const int32 ox = x + VertexOffset[c][0];
+					const int32 oy = y + VertexOffset[c][1];
+					const int32 oz = z + VertexOffset[c][2];
+					CornerGrads[c] = GradientAtCorner(ox, oy, oz);
+				}
+				bGradsComputed = true;
+			}
+
 			const int32 a = EdgeConnection[e][0];
 			const int32 b = EdgeConnection[e][1];
 			const float va = CornerValues[a];
 			const float vb = CornerValues[b];
 			const float denom = vb - va;
 			const float t = FMath::IsNearlyZero(denom) ? 0.5f : (-va / denom);
-			EdgeVerts[e] = CornerPos[a] + (CornerPos[b] - CornerPos[a]) * t;
+
+			const FVector VPos = CornerPos[a] + (CornerPos[b] - CornerPos[a]) * t;
+			const FVector VNorm = FMath::Lerp(CornerGrads[a], CornerGrads[b], t).GetSafeNormal();
+
+			const int32 NewIdx = Out.Vertices.Num();
+			Out.Vertices.Add(VPos);
+			Out.Normals.Add(VNorm);
+			Out.UV0.Add(GetUV(VPos, VNorm));
+			Out.Colors.Add(GetVertexColor(VPos, VNorm));
+			EdgeToVertex[Key] = NewIdx;
+			EdgeVertIndex[e] = NewIdx;
 		}
 
 		for (int32 i = 0; i < 16; i += 3)
@@ -164,33 +373,9 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			const int t1 = TriangleConnectionTable[CubeIndex][i + 1];
 			const int t2 = TriangleConnectionTable[CubeIndex][i + 2];
 
-			const FVector A = EdgeVerts[t0];
-			const FVector B = EdgeVerts[t1];
-			const FVector C = EdgeVerts[t2];
-
-			const FVector FaceNormal = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
-			const FColor FaceColor = GetVertexColor(A, FaceNormal);
-			const FVector2D UVa = GetUV(A, FaceNormal);
-			const FVector2D UVb = GetUV(B, FaceNormal);
-			const FVector2D UVc = GetUV(C, FaceNormal);
-
-			Out.Vertices.Add(A);
-			Out.Vertices.Add(B);
-			Out.Vertices.Add(C);
-			Out.Normals.Add(FaceNormal);
-			Out.Normals.Add(FaceNormal);
-			Out.Normals.Add(FaceNormal);
-			Out.Triangles.Add(VertexCounter + 0);
-			Out.Triangles.Add(VertexCounter + 1);
-			Out.Triangles.Add(VertexCounter + 2);
-			VertexCounter += 3;
-
-			Out.UV0.Add(UVa);
-			Out.UV0.Add(UVb);
-			Out.UV0.Add(UVc);
-			Out.Colors.Add(FaceColor);
-			Out.Colors.Add(FaceColor);
-			Out.Colors.Add(FaceColor);
+			Out.Triangles.Add(EdgeVertIndex[t0]);
+			Out.Triangles.Add(EdgeVertIndex[t1]);
+			Out.Triangles.Add(EdgeVertIndex[t2]);
 		}
 	}
 }
@@ -209,9 +394,9 @@ void AGenerateSurface::UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data)
 		return;
 	}
 
-	const bool bWithCollision = !(bDeferCollisionDuringEdit && bInEditStroke);
+	const bool bWithCollision = bCollisionEnabled && !(bDeferCollisionDuringEdit && bInEditStroke);
 	Mesh->CreateMeshSection(Info.SectionIndex, Data.Vertices, Data.Triangles, Data.Normals, Data.UV0, Data.Colors, EmptyTangents, bWithCollision);
-	if (Material) Mesh->SetMaterial(Info.SectionIndex, Material);
+	if (Material && !Info.bCreated) Mesh->SetMaterial(Info.SectionIndex, Material);
 	Info.bCreated = true;
 
 	if (bWithCollision)
@@ -229,6 +414,8 @@ void AGenerateSurface::FlushDirtySubChunks()
 	const int32 N = DirtySubChunks.Num();
 	if (N == 0) return;
 
+	const double T0 = FPlatformTime::Seconds();
+
 	CachedIndices.Reset(N);
 	for (int32 Idx : DirtySubChunks) CachedIndices.Add(Idx);
 	DirtySubChunks.Reset();
@@ -240,9 +427,19 @@ void AGenerateSurface::FlushDirtySubChunks()
 		BuildSubChunkData(CachedIndices[i], CachedBuilds[i]);
 	});
 
+	const double T1 = FPlatformTime::Seconds();
+
 	for (int32 i = 0; i < N; ++i)
 	{
 		UploadSubChunk(CachedIndices[i], CachedBuilds[i]);
+	}
+
+	const double T2 = FPlatformTime::Seconds();
+	const double TotalMs = (T2 - T0) * 1000.0;
+	if (TotalMs > 3.0)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[FLUSH] subchunks=%d build=%.2fms upload=%.2fms total=%.2fms"),
+			N, (T1 - T0) * 1000.0, (T2 - T1) * 1000.0, TotalMs);
 	}
 }
 
@@ -275,62 +472,88 @@ void AGenerateSurface::MarkVoxelDirty(int32 x, int32 y, int32 z)
 void AGenerateSurface::Setup()
 {
 	const int Dim = Size + 1;
-	Voxels.SetNumZeroed(Dim * Dim * Dim);
-	HumidityNoiseValues.SetNumZeroed(Dim * Dim);
-	TemperatureNoiseValues.SetNumZeroed(Dim * Dim);
-	float sampleHeight = 0.0f;
-	// Example 2D height sampling (fill your own noise sampling)
-	for (int x = 0; x < Dim; ++x)
-	{
-		for (int y = 0; y < Dim; ++y)
-		{
-			// compute height in world units (use your noise, offset by actor/world position)
-			for (int z = 0; z < Dim; ++z)
-			{
-				// store signed distance relative to SurfaceLevel (marching uses iso = 0)
-				float value = z - sampleHeight - SurfaceLevel;
-				Voxels[GetVoxelIndex(x, y, z)] = value;
-				
-			}
-		}
-	}
+	Voxels.SetNumUninitialized(Dim * Dim * Dim);
+	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
+	TemperatureNoiseValues.SetNumUninitialized(Dim * Dim);
 }
 void AGenerateSurface::Generate2DHeightMap(FVector Position)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
-	Voxels.SetNum((Size + 1) * (Size + 1) * (Size + 1));
-    
-	for (int x = 0; x <= Size; ++x)
+	UE_LOG(LogTemp, Verbose, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
+	const int Dim = Size + 1;
+	Voxels.SetNumUninitialized(Dim * Dim * Dim);
+	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
+	TemperatureNoiseValues.SetNumUninitialized(Dim * Dim);
+
+	const float MaxTerrainHeight = (float)Size * HeightScale * MountainBoost + HeightOffset;
+	if (MaxTerrainHeight >= (float)Size)
 	{
-		for (int y = 0; y <= Size; ++y)
+		UE_LOG(LogTemp, Verbose, TEXT("[HEIGHTMAP] terrain may clip top of chunk: maxHeight=%.1f, Size=%d. Lower MountainBoost or HeightScale."), MaxTerrainHeight, Size);
+	}
+
+	const float MaxAllowed = (float)Size - 1.0f;
+	const float PX = Position.X;
+	const float PY = Position.Y;
+	BiomeOriginYVoxel = PY;
+	const int32 HPos = HumidityPos;
+	const int32 TPos = TemperaturePos;
+	FastNoiseLite* LocalNoise = Noise.Get();
+	FastNoiseLite* LocalBiomeNoise = BiomeNoise.IsValid() ? BiomeNoise.Get() : LocalNoise;
+	FastNoiseLite* LocalContinentNoise = ContinentNoise.IsValid() ? ContinentNoise.Get() : LocalNoise;
+	FastNoiseLite* LocalRiverNoise = RiverNoise.IsValid() ? RiverNoise.Get() : LocalNoise;
+
+	ParallelFor(Dim, [&](int32 x)
+	{
+		for (int y = 0; y < Dim; ++y)
 		{
-			if (x ==0 && y == 0)
-				UE_LOG( LogTemp, Warning, TEXT("Generating voxel column at x: %f, y: %f"), ((Position.X ) + x), (Position.Y) + y);
-			// Get 2D noise height at this x,y position
-			float noiseHeight = Noise->GetNoise(
-				(Position.X ) + x, 
-				(Position.Y ) + y
-			);
-			HumidityNoiseValues[x + y * (Size + 1)] = Noise->GetNoise(
-				(Position.X + HumidityPos) + x, 
-				(Position.Y + HumidityPos) + y
-			);
-			TemperatureNoiseValues[x + y * (Size + 1)] = Noise->GetNoise(
-				(Position.X + TemperaturePos) + x, 
-				(Position.Y + TemperaturePos) + y
-			);
-			// Scale noise to useful range (e.g., 0 to Size)
-			float terrainHeight = (noiseHeight + 1.0f) * 0.5f * Size * HeightScale + HeightOffset;
-            
-			for (int z = 0; z <= Size; z++)
+			float noiseHeight = LocalNoise->GetNoise(PX + (float)x, PY + (float)y);
+			HumidityNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + HPos + (float)x, PY + HPos + (float)y);
+			TemperatureNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + TPos + (float)x, PY + TPos + (float)y);
+
+			float h01 = FMath::Clamp((noiseHeight + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f);
+			h01 = FMath::Pow(h01, HeightRedistribution);
+			float terrainHeight = h01 * (float)Size * HeightScale * MountainBoost + HeightOffset;
+
+			if (bEnableOceans)
 			{
-				int index = GetVoxelIndex(x, y, z);
-				// Voxel value: negative = solid, positive = air
-				// Distance from terrain surface
-				Voxels[index] = z - terrainHeight;
+				const float cont01 = (LocalContinentNoise->GetNoise(PX + (float)x, PY + (float)y) + 1.0f) * 0.5f;
+				const float landT = FMath::Clamp((cont01 - OceanThreshold) / FMath::Max(0.0001f, CoastWidth), 0.0f, 1.0f);
+				const float landFactor = landT * landT * (3.0f - 2.0f * landT);
+				terrainHeight = FMath::Lerp(OceanFloorVoxel, terrainHeight, landFactor);
+			}
+
+			if (bEnableRivers && terrainHeight < RiverMaxTerrain)
+			{
+				const float rv = LocalRiverNoise->GetNoise(PX + (float)x, PY + (float)y);
+				const float rEdge = FMath::Clamp(FMath::Abs(rv) / FMath::Max(0.0001f, RiverWidth), 0.0f, 1.0f);
+				const float riverMask = 1.0f - (rEdge * rEdge * (3.0f - 2.0f * rEdge));
+				if (riverMask > 0.0f)
+				{
+					terrainHeight = FMath::Lerp(terrainHeight, RiverBedVoxel, riverMask * RiverStrength);
+				}
+			}
+
+			if (terrainHeight < 0.2f) terrainHeight = 0.2f;
+			if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
+
+			for (int z = 0; z < Dim; ++z)
+			{
+				Voxels[GetVoxelIndex(x, y, z)] = (float)z - terrainHeight;
 			}
 		}
+	});
+
+	float TMin = FLT_MAX, TMax = -FLT_MAX, TSum = 0.f;
+	float HMin = FLT_MAX, HMax = -FLT_MAX, HSum = 0.f;
+	const int32 Count = Dim * Dim;
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const float Tv = TemperatureNoiseValues[i] * 0.5f + 0.5f;
+		const float Hv = HumidityNoiseValues[i] * 0.5f + 0.5f;
+		TMin = FMath::Min(TMin, Tv); TMax = FMath::Max(TMax, Tv); TSum += Tv;
+		HMin = FMath::Min(HMin, Hv); HMax = FMath::Max(HMax, Hv); HSum += Hv;
 	}
+	UE_LOG(LogTemp, Verbose, TEXT("[BIOME] Temp [%.3f..%.3f] avg %.3f | Humid [%.3f..%.3f] avg %.3f | freq=%.4f chunk(%.0f,%.0f)"),
+		TMin, TMax, TSum / Count, HMin, HMax, HSum / Count, BiomeFrequency, PX, PY);
 }
 
 ProceduralGenerationType AGenerateSurface::SetGenerationType()
@@ -470,10 +693,61 @@ FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
 
 FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 {
-	const float VoxelHeight = Position.Z / 100.0f;
+	const float VoxelHeight = Position.Z / kVoxelScale;
+
+	const int32 Dim = Size + 1;
+	const int32 vx = FMath::Clamp(FMath::RoundToInt(Position.X / kVoxelScale), 0, Size);
+	const int32 vy = FMath::Clamp(FMath::RoundToInt(Position.Y / kVoxelScale), 0, Size);
+	const int32 NIdx = vx + vy * Dim;
+
+	float NoiseTemp = 0.5f;
+	float NoiseHumid = 0.5f;
+	const float BiomeContrast = 2.8f;
+	if (TemperatureNoiseValues.IsValidIndex(NIdx)) NoiseTemp = FMath::Clamp(TemperatureNoiseValues[NIdx] * BiomeContrast * 0.5f + 0.5f, 0.0f, 1.0f);
+	if (HumidityNoiseValues.IsValidIndex(NIdx)) NoiseHumid = FMath::Clamp(HumidityNoiseValues[NIdx] * BiomeContrast * 0.5f + 0.5f, 0.0f, 1.0f);
+
+	const float Denom = FMath::Max(1.0f, (float)Size - SeaLevel);
+	const float NormalizedAltitude = FMath::Clamp((VoxelHeight - SeaLevel) / Denom, 0.0f, 1.0f);
+
+	const float LatitudePeriod = 2000.0f;
+	const float WorldVoxelY = BiomeOriginYVoxel + Position.Y / kVoxelScale;
+	const float LatitudeClimate = 0.5f + 0.5f * FMath::Sin(WorldVoxelY * (2.0f * PI / LatitudePeriod));
+
+	float Temperature = NoiseTemp * 0.8f + LatitudeClimate * 0.2f;
+	Temperature = FMath::Clamp(Temperature - NormalizedAltitude * BiomeHeightCooling, 0.0f, 1.0f);
+	const float Humidity = FMath::Clamp(NoiseHumid + (0.5f - NormalizedAltitude) * BiomeHeightDrying, 0.0f, 1.0f);
+
+	if (BiomeDebugView == 1)
+	{
+		const uint8 c = (uint8)(Temperature * 255.0f);
+		return FColor(c, 0, 255 - c);
+	}
+	if (BiomeDebugView == 2)
+	{
+		const uint8 c = (uint8)(Humidity * 255.0f);
+		return FColor(255 - c, 255 - c, 255);
+	}
+	if (BiomeDebugView == 3)
+	{
+		return GetBiomeColor(Temperature, Humidity);
+	}
+	if (BiomeDebugView == 4)
+	{
+		const uint8 c = (uint8)(FMath::Clamp(VoxelHeight / FMath::Max(1.0f, (float)Size), 0.0f, 1.0f) * 255.0f);
+		return FColor(c, c, c);
+	}
+
 	if (VoxelHeight <= SeaLevel)
 	{
 		return FColor(32, 96, 160);
+	}
+	if (VoxelHeight <= SeaLevel + 2.0f)
+	{
+		return FColor(214, 203, 156);
+	}
+	if (VoxelHeight >= SnowLevel)
+	{
+		return FColor(236, 240, 245);
 	}
 
 	const float Slope = 1.0f - FMath::Clamp(FVector::DotProduct(Normal, FVector::UpVector), 0.0f, 1.0f);
@@ -482,7 +756,43 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 		return FColor(96, 96, 96);
 	}
 
-	return FColor(70, 130, 60);
+	return GetBiomeColor(Temperature, Humidity);
+}
+
+FColor AGenerateSurface::GetBiomeColor(float Temperature01, float Humidity01) const
+{
+	const FColor Palette[3][3] = {
+		{ FColor(150, 152, 138), FColor(104, 144, 120), FColor(66, 112, 92)  },
+		{ FColor(206, 200, 120), FColor(108, 166, 78),  FColor(56, 118, 62)  },
+		{ FColor(224, 168, 84),  FColor(198, 192, 86),  FColor(52, 142, 66)  }
+	};
+
+	const float tt = FMath::Clamp(Temperature01, 0.0f, 1.0f) * 2.0f;
+	const float hh = FMath::Clamp(Humidity01, 0.0f, 1.0f) * 2.0f;
+	const int32 t0 = FMath::Clamp(FMath::FloorToInt(tt), 0, 2);
+	const int32 h0 = FMath::Clamp(FMath::FloorToInt(hh), 0, 2);
+	const int32 t1 = FMath::Min(t0 + 1, 2);
+	const int32 h1 = FMath::Min(h0 + 1, 2);
+	const float tf = tt - (float)t0;
+	const float hf = hh - (float)h0;
+
+	const FColor& c00 = Palette[t0][h0];
+	const FColor& c01 = Palette[t0][h1];
+	const FColor& c10 = Palette[t1][h0];
+	const FColor& c11 = Palette[t1][h1];
+
+	const float r0 = FMath::Lerp((float)c00.R, (float)c01.R, hf);
+	const float g0 = FMath::Lerp((float)c00.G, (float)c01.G, hf);
+	const float b0 = FMath::Lerp((float)c00.B, (float)c01.B, hf);
+	const float r1 = FMath::Lerp((float)c10.R, (float)c11.R, hf);
+	const float g1 = FMath::Lerp((float)c10.G, (float)c11.G, hf);
+	const float b1 = FMath::Lerp((float)c10.B, (float)c11.B, hf);
+
+	return FColor(
+		(uint8)FMath::RoundToInt(FMath::Lerp(r0, r1, tf)),
+		(uint8)FMath::RoundToInt(FMath::Lerp(g0, g1, tf)),
+		(uint8)FMath::RoundToInt(FMath::Lerp(b0, b1, tf)),
+		255);
 }
 
 float AGenerateSurface::GetInterpolationOffset(const float V1, const float V2) const
@@ -517,6 +827,71 @@ FBox AGenerateSurface::GetWorldAABB() const
 	const FVector Origin = GetActorLocation();
 	const float WorldSize = Size * kVoxelScale;
 	return FBox(Origin, Origin + FVector(WorldSize, WorldSize, WorldSize));
+}
+
+void AGenerateSurface::CarveCaveSphere(const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels)
+{
+	if (OriginalVoxels.Num() == 0) OriginalVoxels = Voxels;
+	CarveSphereImpl(GetActorLocation(), WorldCenter, WorldRadius, bDistorted, MinRoofVoxels, true);
+}
+
+void AGenerateSurface::CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty)
+{
+	const FVector LocalCenter = (WorldCenter - ChunkOrigin) / kVoxelScale;
+	const float LocalRadius = WorldRadius / kVoxelScale;
+	const float Padding = bDistorted ? 5.f : 1.f;
+	const float OuterRadius = LocalRadius + Padding;
+	const float R2 = LocalRadius * LocalRadius;
+
+	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - OuterRadius));
+	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - OuterRadius));
+	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - OuterRadius));
+	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + OuterRadius));
+	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + OuterRadius));
+	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + OuterRadius));
+
+	static thread_local FastNoiseLite WallNoise;
+	static thread_local bool bWallNoiseInit = false;
+	if (bDistorted && !bWallNoiseInit)
+	{
+		WallNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+		WallNoise.SetFrequency(0.1f);
+		bWallNoiseInit = true;
+	}
+
+	for (int32 z = MinZ; z <= MaxZ; ++z)
+	for (int32 y = MinY; y <= MaxY; ++y)
+	for (int32 x = MinX; x <= MaxX; ++x)
+	{
+		const float dx = x - LocalCenter.X;
+		const float dy = y - LocalCenter.Y;
+		const float dz = z - LocalCenter.Z;
+		const float D2 = dx*dx + dy*dy + dz*dz;
+
+		float EffectiveR2 = R2;
+		if (bDistorted)
+		{
+			const float NoiseVal = WallNoise.GetNoise((float)x, (float)y, (float)z);
+			const float NoisyR = LocalRadius + (NoiseVal * 5.f);
+			EffectiveR2 = NoisyR * NoisyR;
+		}
+
+		if (D2 > EffectiveR2) continue;
+
+		float& V = Voxels[GetVoxelIndex(x, y, z)];
+		if (V >= DensityClampMax) continue;
+		if (MinRoofVoxels > 0.f && V > -MinRoofVoxels) continue;
+		V = DensityClampMax;
+		if (bMarkDirty) MarkVoxelDirty(x, y, z);
+	}
+}
+
+void AGenerateSurface::SetChunkCollisionEnabled(bool bEnable)
+{
+	if (bCollisionEnabled == bEnable) return;
+	if (bGenerating) return;
+	bCollisionEnabled = bEnable;
+	KickAsyncBuild(false);
 }
 
 void AGenerateSurface::BeginEditStroke()
@@ -595,15 +970,40 @@ bool AGenerateSurface::TraceDensityField(const FVector& WorldStart, const FVecto
 	const FVector LocalDir = WorldDir.GetSafeNormal();
 
 	const float StepGrid = 0.5f;
-	const float StepWorld = StepGrid * kVoxelScale;
-	const int32 MaxSteps = FMath::CeilToInt(MaxDist / StepWorld);
+	const float LocalMaxDist = MaxDist / kVoxelScale;
 
-	float PrevD = SampleDensityTrilinear(LocalStart.X, LocalStart.Y, LocalStart.Z);
-	FVector PrevL = LocalStart;
+	const float BoxMin = 0.f;
+	const float BoxMax = (float)Size;
+	float tEnter = 0.f;
+	float tExit = LocalMaxDist;
+	for (int32 axis = 0; axis < 3; ++axis)
+	{
+		const float O = LocalStart[axis];
+		const float D = LocalDir[axis];
+		if (FMath::Abs(D) < KINDA_SMALL_NUMBER)
+		{
+			if (O < BoxMin || O > BoxMax) return false;
+			continue;
+		}
+		const float InvD = 1.f / D;
+		float t1 = (BoxMin - O) * InvD;
+		float t2 = (BoxMax - O) * InvD;
+		if (t1 > t2) Swap(t1, t2);
+		tEnter = FMath::Max(tEnter, t1);
+		tExit = FMath::Min(tExit, t2);
+		if (tEnter > tExit) return false;
+	}
+	if (tExit <= 0.f) return false;
+
+	const FVector EntryL = LocalStart + LocalDir * tEnter;
+	const int32 MaxSteps = FMath::CeilToInt((tExit - tEnter) / StepGrid);
+
+	float PrevD = SampleDensityTrilinear(EntryL.X, EntryL.Y, EntryL.Z);
+	FVector PrevL = EntryL;
 
 	for (int32 i = 1; i <= MaxSteps; ++i)
 	{
-		const FVector L = LocalStart + LocalDir * (StepGrid * i);
+		const FVector L = EntryL + LocalDir * (StepGrid * i);
 		const float D = SampleDensityTrilinear(L.X, L.Y, L.Z);
 
 		if (PrevD > 0.f && D <= 0.f)
@@ -641,10 +1041,10 @@ void AGenerateSurface::ApplyBrush(const FVector& WorldCenter, float Radius, floa
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(0, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
@@ -679,10 +1079,10 @@ void AGenerateSurface::ApplyFlatten(const FVector& WorldCenter, float Radius, fl
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(0, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
@@ -716,10 +1116,10 @@ void AGenerateSurface::ApplySmooth(const FVector& WorldCenter, float Radius, flo
 
 	const int32 MinX = FMath::Max(1, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(1, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size - 1, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size - 1, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)

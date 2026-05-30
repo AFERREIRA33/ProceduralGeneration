@@ -113,6 +113,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Brush")
 	bool IsToolActive() const { return bToolActive; }
 
+	UPROPERTY(EditAnywhere, Category="Brush|Perf")
+	float TraceMinInterval = 0.016f;
+
+	UPROPERTY(EditAnywhere, Category="Brush|Perf")
+	float TraceCamDeltaThreshold = 1.0f;
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
@@ -125,5 +131,17 @@ private:
 	bool bStrokeActive = false;
 	TArray<TWeakObjectPtr<AGenerateSurface>> StrokeTouchedTerrains;
 
-	bool TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain) const;
+	TArray<TWeakObjectPtr<AGenerateSurface>> CachedTerrains;
+	float TerrainCacheAge = 999.f;
+
+	float TraceAccumulator = 999.f;
+	FVector LastTraceCamPos = FVector::ZeroVector;
+	FVector LastTraceCamDir = FVector::ZeroVector;
+	bool bHasLastTrace = false;
+	bool bLastTraceHit = false;
+	FHitResult LastHit;
+	TWeakObjectPtr<AGenerateSurface> LastHitTerrain;
+
+	void RefreshTerrainCacheIfNeeded(float DeltaTime);
+	bool TraceFromCamera(FHitResult& OutHit, AGenerateSurface*& OutTerrain);
 };

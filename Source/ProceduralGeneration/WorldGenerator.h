@@ -7,14 +7,17 @@
 #include "Utils/FastNoiseLite.h"
 #include "WorldGenerator.generated.h"
 
+class AGenerateSurface;
+class ACaveMarchingCube;
+
 UCLASS()
 class PROCEDURALGENERATION_API AWorldGenerator : public AActor
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditDefaultsOnly, Category="Chunk")
-	int Size = 64;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	int Size = 96;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	TObjectPtr<UMaterialInterface> Material;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
@@ -22,6 +25,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise")
 	int Seed = 1337;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise")
+	bool RandomizeSeedOnPlay = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk|Noise", meta=(ClampMin="1", UIMin="1"))
 	int FractalOctaves = 3;
@@ -38,13 +44,100 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
 	float HeightOffset = 0.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1", UIMin="1.0", UIMax="6.0"))
+	float HeightRedistribution = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1", UIMin="0.5", UIMax="3.0"))
+	float MountainBoost = 1.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(UIMin="-0.5", UIMax="0.5"))
+	float MountainBias = -0.1f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
-	float SeaLevel = 20.0f;
+	float SeaLevel = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0"))
+	float BiomeFrequency = 0.012f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome")
+	float SnowLevel = 88.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BiomeHeightCooling = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0", ClampMax="4"))
+	int32 BiomeDebugView = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BiomeHeightDrying = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	bool bEnableOceans = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0001"))
+	float ContinentFrequency = 0.0025f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float OceanThreshold = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.01", ClampMax="1.0"))
+	float CoastWidth = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float OceanFloorVoxel = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	bool bEnableRivers = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0001"))
+	float RiverFrequency = 0.006f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.001", ClampMax="0.5"))
+	float RiverWidth = 0.045f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float RiverBedVoxel = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float RiverStrength = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float RiverMaxTerrain = 40.0f;
 
 	UPROPERTY(editAnywhere, BlueprintReadWrite)
 	int SurfaceLevel = 0;
 	UPROPERTY(editAnywhere, BlueprintReadWrite, Category="Chunk")
 	int MapRange = 10;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
+	bool bChunksCastShadows = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
+	bool bVerboseGenerationLog = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming")
+	bool bStreamingEnabled = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
+	int StreamRadius = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="0"))
+	int UnloadMargin = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
+	int MaxChunksPerFrame = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
+	bool bChunkCollision = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
+	bool bAsyncGeneration = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="0"))
+	int CollisionRadius = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming")
+	bool bEnableCaves = true;
 	
 	// Sets default values for this actor's properties
 	AWorldGenerator();
@@ -63,4 +156,17 @@ private:
 	//AChunkBase* actualChunk;
 	
 	void GenerateWorld();
+
+	void AnchorStreaming();
+	void UpdateStreaming();
+	AGenerateSurface* SpawnChunkAt(int ChunkX, int ChunkY, bool bWantCollision);
+
+	UPROPERTY()
+	TMap<FIntPoint, TObjectPtr<AGenerateSurface>> LoadedChunks;
+
+	UPROPERTY()
+	TObjectPtr<ACaveMarchingCube> CaveActor;
+
+	float StreamSurfaceZ = 0.0f;
+	bool bStreamAnchored = false;
 };

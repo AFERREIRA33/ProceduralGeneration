@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include  "ProceduralMeshComponent.h"
 #include "ProceduralGeneration/Chunk/ChunkBase.h"
+#include "ProceduralGeneration/CaveGeneration/CaveCarveOp.h"
 #include "GenerateSurface.generated.h"
 
 UCLASS()
@@ -23,8 +24,65 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
 	float HeightOffset = 0.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1"))
+	float HeightRedistribution = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1"))
+	float MountainBoost = 1.8f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
-	float SeaLevel = 20.0f;
+	float MountainBias = -0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
+	float SeaLevel = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0"))
+	float BiomeFrequency = 0.012f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome")
+	float SnowLevel = 88.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BiomeHeightCooling = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BiomeHeightDrying = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0", ClampMax="4"))
+	int32 BiomeDebugView = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	bool bEnableOceans = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0001"))
+	float ContinentFrequency = 0.0025f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float OceanThreshold = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.01", ClampMax="1.0"))
+	float CoastWidth = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float OceanFloorVoxel = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	bool bEnableRivers = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0001"))
+	float RiverFrequency = 0.006f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.001", ClampMax="0.5"))
+	float RiverWidth = 0.045f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float RiverBedVoxel = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float RiverStrength = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
+	float RiverMaxTerrain = 40.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Edit")
 	float DensityClampMin = -1.f;
@@ -35,11 +93,17 @@ public:
 	UPROPERTY(EditAnywhere, Category="Edit|Perf")
 	float RemeshInterval = 0.033f;
 
+	UPROPERTY(EditAnywhere, Category="Edit|Perf")
+	float RemeshIntervalDuringStroke = 0.033f;
+
 	UPROPERTY(EditDefaultsOnly, Category="Edit|Perf", meta=(ClampMin="4", ClampMax="32"))
 	int32 SubChunkSize = 32;
 
 	UPROPERTY(EditAnywhere, Category="Edit|Perf")
 	bool bDeferCollisionDuringEdit = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Edit|Perf")
+	bool bCollisionEnabled = true;
 
 	AGenerateSurface();
 
@@ -52,6 +116,16 @@ public:
 	void EndEditStroke();
 	void ResetToOriginal();
 	FBox GetWorldAABB() const;
+
+	void CarveCaveSphere(const FVector& WorldCenter, float WorldRadius, bool bDistorted = false, float MinRoofVoxels = 0.f);
+
+	void SetChunkCollisionEnabled(bool bEnable);
+	bool HasChunkCollision() const { return bCollisionEnabled; }
+
+	void SetPendingCaveData(TArray<FCaveCarveOp>&& Ops, float MinRoof);
+	void StartGenerationAsync();
+	void ApplyPendingCavesSync();
+	bool IsGenerating() const { return bGenerating; }
 
 	virtual void StartGeneration() override;
 	virtual void Tick(float DeltaTime) override;
@@ -73,6 +147,7 @@ private:
 		TArray<FVector> Normals;
 		TArray<FVector2D> UV0;
 		TArray<FColor> Colors;
+		TArray<int32> EdgeToVertex;
 	};
 
 	TArray<FSubChunk> SubChunks;
@@ -85,6 +160,17 @@ private:
 	bool bInEditStroke = false;
 	bool bDirtyDuringStroke = false;
 	TArray<float> OriginalVoxels;
+
+	TArray<FCaveCarveOp> PendingCaveOps;
+	float PendingCaveMinRoof = 0.f;
+	bool bGenerating = false;
+	FVector GenChunkOrigin = FVector::ZeroVector;
+
+	void KickAsyncBuild(bool bGenVoxels);
+	void BuildChunkDataAsync(bool bGenVoxels);
+	void FinishGenerationGameThread();
+	void ApplyPendingCavesGenTime();
+	void CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty);
 
 	void BuildSubChunks();
 	void RebuildAllSubChunks();
@@ -107,11 +193,16 @@ private:
 	
 	FVector2D GetUV(FVector Position, FVector Normal) const;
 	FColor GetVertexColor(FVector Position, FVector Normal) const;
+	FColor GetBiomeColor(float Temperature01, float Humidity01) const;
 	int HumidityPos = 1000000;
 	int TemperaturePos = -1000000;
+	float BiomeOriginYVoxel = 0.0f;
 	TArray<float> Voxels;
 	TArray<float> HumidityNoiseValues;
 	TArray<float> TemperatureNoiseValues;
+	TUniquePtr<FastNoiseLite> BiomeNoise;
+	TUniquePtr<FastNoiseLite> ContinentNoise;
+	TUniquePtr<FastNoiseLite> RiverNoise;
 
 	int TriangleOrder[3] = {0, 1, 2};
 	float Min = 0;

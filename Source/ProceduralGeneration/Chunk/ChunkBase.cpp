@@ -18,8 +18,14 @@ AChunkBase::AChunkBase()
 
 	// Mesh Settings
 	Mesh->SetCastShadow(false);
+	Mesh->bCastStaticShadow = false;
+	Mesh->bCastFarShadow = false;
+	Mesh->bAffectDistanceFieldLighting = false;
+	Mesh->bAffectDynamicIndirectLighting = false;
+	Mesh->bUseAsOccluder = true;
+	Mesh->SetCanEverAffectNavigation(false);
+	Mesh->SetMobility(EComponentMobility::Movable);
 
-	// Set Mesh as root
 	SetRootComponent(Mesh);
 }
 
@@ -81,7 +87,9 @@ void AChunkBase::ApplyMesh() const
 		TArray<FProcMeshTangent>(),
 		true
 	);
-	Mesh->SetCastShadow( true);
+	Mesh->SetCastShadow(bCastShadows);
+	Mesh->bCastStaticShadow = false;
+	Mesh->bCastFarShadow = false;
 }
 
 void AChunkBase::ClearMesh()

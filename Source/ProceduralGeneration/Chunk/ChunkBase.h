@@ -27,6 +27,9 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	TObjectPtr<UMaterialInterface> Material;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
+	bool bCastShadows = true;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	float Frequency = 0.01f;
