@@ -24,6 +24,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
 	float HeightOffset = 0.0f;
 
+	int UndergroundDepth = 32;
+	int SizeZ = 96;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1"))
 	float HeightRedistribution = 4.0f;
 
@@ -105,6 +108,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Edit|Perf")
 	bool bCollisionEnabled = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0", ClampMax="5"))
+	int32 LODLevel = 0;
+
+	int32 TransitionFaceMask = 0;
+
+	int32 FinerNeighbourMask = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bUseTransvoxelMesher = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.0", UIMin="0.0", UIMax="4.0"))
+	float TransitionWidthScale = 0.5f;
+
 	AGenerateSurface();
 
 	void ApplyBrush(const FVector& WorldCenter, float Radius, float Delta);
@@ -117,10 +133,16 @@ public:
 	void ResetToOriginal();
 	FBox GetWorldAABB() const;
 
+	void SetPersistedEdits(const TMap<int32, float>& InEdits);
+	void ExtractEditedVoxels(TMap<int32, float>& OutEdits) const;
+	void ApplyPersistedEditsSync();
+
 	void CarveCaveSphere(const FVector& WorldCenter, float WorldRadius, bool bDistorted = false, float MinRoofVoxels = 0.f);
 
 	void SetChunkCollisionEnabled(bool bEnable);
 	bool HasChunkCollision() const { return bCollisionEnabled; }
+	void SetLODLevel(int32 NewLOD);
+	void SetLODAndTransitions(int32 NewLOD, int32 NewMask, int32 NewFinerMask);
 
 	void SetPendingCaveData(TArray<FCaveCarveOp>&& Ops, float MinRoof);
 	void StartGenerationAsync();
@@ -163,6 +185,7 @@ private:
 
 	TArray<FCaveCarveOp> PendingCaveOps;
 	float PendingCaveMinRoof = 0.f;
+	TMap<int32, float> PendingEdits;
 	bool bGenerating = false;
 	FVector GenChunkOrigin = FVector::ZeroVector;
 
@@ -170,16 +193,22 @@ private:
 	void BuildChunkDataAsync(bool bGenVoxels);
 	void FinishGenerationGameThread();
 	void ApplyPendingCavesGenTime();
+	void ApplyPersistedEditsGenTime();
 	void CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty);
 
 	void BuildSubChunks();
 	void RebuildAllSubChunks();
 	void BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) const;
+	void BuildSubChunkDataTransvoxel(int32 Idx, FSubChunkBuildData& Out) const;
+	void BuildTransitionFace(const FSubChunk& Info, int32 FaceDir, FSubChunkBuildData& Out, TMap<FIntVector, int32>& Dedup) const;
+	FVector ComputeTransitionInset(const FVector& P, const FVector& N) const;
+	int32 AddOrReuseVertex(FSubChunkBuildData& Out, TMap<FIntVector, int32>& Dedup, const FVector& Pos, const FVector& Norm) const;
 	void UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data);
 	void FlushDirtySubChunks();
 	void MarkVoxelDirty(int32 x, int32 y, int32 z);
 	FVector GradientAtCorner(int32 x, int32 y, int32 z) const;
 	float SampleDensityTrilinear(float lx, float ly, float lz) const;
+	float SampleTransitionCorner(int32 ox, int32 oy, int32 oz, int32 Step) const;
 
 	virtual ProceduralGenerationType SetGenerationType() override;
 	virtual void Setup() override;
@@ -200,6 +229,7 @@ private:
 	TArray<float> Voxels;
 	TArray<float> HumidityNoiseValues;
 	TArray<float> TemperatureNoiseValues;
+	TArray<float> SurfaceHeightVoxel;
 	TUniquePtr<FastNoiseLite> BiomeNoise;
 	TUniquePtr<FastNoiseLite> ContinentNoise;
 	TUniquePtr<FastNoiseLite> RiverNoise;

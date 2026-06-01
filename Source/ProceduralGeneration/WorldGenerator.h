@@ -44,6 +44,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface")
 	float HeightOffset = 0.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0", ClampMax="96"))
+	int UndergroundDepth = 32;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1", UIMin="1.0", UIMax="6.0"))
 	float HeightRedistribution = 4.0f;
 
@@ -119,7 +122,7 @@ public:
 	bool bStreamingEnabled = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
-	int StreamRadius = 4;
+	int StreamRadius = 12;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="0"))
 	int UnloadMargin = 2;
@@ -138,13 +141,41 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming")
 	bool bEnableCaves = true;
-	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bUseOctreeLOD = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0", ClampMax="5"))
+	int DebugForceLOD = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="1"))
+	int LODChunkRadius0 = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="1"))
+	int LODChunksPerLevel = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0", ClampMax="5"))
+	int MaxLOD = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bBalanceLOD = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bUseTransvoxelMesher = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.0", UIMin="0.0", UIMax="4.0"))
+	float TransitionWidthScale = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Persistence")
+	bool bPersistEdits = true;
+
 	// Sets default values for this actor's properties
 	AWorldGenerator();
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:
 	// Called every frame
@@ -160,13 +191,22 @@ private:
 	void AnchorStreaming();
 	void UpdateStreaming();
 	AGenerateSurface* SpawnChunkAt(int ChunkX, int ChunkY, bool bWantCollision);
+	int32 ComputeChunkLOD(int ChunkX, int ChunkY) const;
+
+	void CaptureChunkEdits(const FIntPoint& Key, AGenerateSurface* Chunk);
+	void LoadEdits();
+	void SaveEdits();
+	FString EditSavePath() const;
 
 	UPROPERTY()
 	TMap<FIntPoint, TObjectPtr<AGenerateSurface>> LoadedChunks;
+
+	TMap<FIntPoint, TMap<int32, float>> EditStore;
 
 	UPROPERTY()
 	TObjectPtr<ACaveMarchingCube> CaveActor;
 
 	float StreamSurfaceZ = 0.0f;
 	bool bStreamAnchored = false;
+	FIntPoint CurrentCenterChunk = FIntPoint::ZeroValue;
 };

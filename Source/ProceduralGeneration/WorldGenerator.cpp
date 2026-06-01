@@ -9,6 +9,11 @@
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Utils/FastNoiseLite.h"
+#include "Serialization/BufferArchive.h"
+#include "Serialization/MemoryReader.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 
 // Sets default values
@@ -22,6 +27,10 @@ AWorldGenerator::AWorldGenerator()
 void AWorldGenerator::BeginPlay()
 {
 	Super::BeginPlay();
+	if (bPersistEdits && !RandomizeSeedOnPlay)
+	{
+		LoadEdits();
+	}
 	if (bStreamingEnabled)
 	{
 		AnchorStreaming();
@@ -30,6 +39,15 @@ void AWorldGenerator::BeginPlay()
 	{
 		GenerateWorld();
 	}
+}
+
+void AWorldGenerator::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (bPersistEdits && !RandomizeSeedOnPlay)
+	{
+		SaveEdits();
+	}
+	Super::EndPlay(EndPlayReason);
 }
 
 // Called every frame
@@ -80,7 +98,7 @@ void AWorldGenerator::GenerateWorld()
 
 	const float PlayerTerrainNoise = HeightNoise.GetNoise(PlayerLocation.X / 100.0f, PlayerLocation.Y / 100.0f);
 	const float PlayerN01 = FMath::Pow(FMath::Clamp((PlayerTerrainNoise + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f), HeightRedistribution);
-	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset) * 100.0f;
+	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset + UndergroundDepth) * 100.0f;
 	const float SurfaceZ = PlayerFootZ - PlayerTerrainHeight - SurfaceLevel * 100.0f;
 	StreamSurfaceZ = SurfaceZ;
 
@@ -146,14 +164,27 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	chunk->RiverStrength = RiverStrength;
 	chunk->RiverMaxTerrain = RiverMaxTerrain;
 	chunk->Size = Size;
+	chunk->UndergroundDepth = UndergroundDepth;
+	chunk->SizeZ = Size + UndergroundDepth;
 	chunk->bCastShadows = bChunksCastShadows;
 	chunk->bCollisionEnabled = bWantCollision;
 	chunk->bEnableAutoLODGeneration = false;
+	chunk->LODLevel = ComputeChunkLOD(ChunkX, ChunkY);
+	chunk->bUseTransvoxelMesher = bUseTransvoxelMesher;
+	chunk->TransitionWidthScale = TransitionWidthScale;
 
 	if (bEnableCaves && CaveActor)
 	{
 		TArray<FCaveCarveOp> Ops = CaveActor->GetTileOps(chunk->GetWorldAABB());
 		chunk->SetPendingCaveData(MoveTemp(Ops), CaveActor->GetCaveMinRoofDepth());
+	}
+
+	if (bPersistEdits)
+	{
+		if (const TMap<int32, float>* Edits = EditStore.Find(Key))
+		{
+			chunk->SetPersistedEdits(*Edits);
+		}
 	}
 
 	if (bAsyncGeneration)
@@ -164,6 +195,7 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	{
 		chunk->StartGeneration();
 		chunk->ApplyPendingCavesSync();
+		chunk->ApplyPersistedEditsSync();
 	}
 
 	LoadedChunks.Add(Key, chunk);
@@ -200,7 +232,7 @@ void AWorldGenerator::AnchorStreaming()
 
 	const float PlayerTerrainNoise = HeightNoise.GetNoise(PlayerLocation.X / 100.0f, PlayerLocation.Y / 100.0f);
 	const float PlayerN01 = FMath::Pow(FMath::Clamp((PlayerTerrainNoise + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f), HeightRedistribution);
-	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset) * 100.0f;
+	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset + UndergroundDepth) * 100.0f;
 	StreamSurfaceZ = PlayerFootZ - PlayerTerrainHeight - SurfaceLevel * 100.0f;
 
 	if (bEnableCaves)
@@ -214,6 +246,7 @@ void AWorldGenerator::AnchorStreaming()
 			{
 				CaveActor->bStreamingManaged = true;
 				CaveActor->CaveSeed = Seed;
+				CaveActor->TerrainHeightOffsetVoxels = HeightOffset;
 			}
 		}
 	}
@@ -233,6 +266,7 @@ void AWorldGenerator::UpdateStreaming()
 	const FVector PlayerLocation = PlayerPawn->GetActorLocation();
 	const int CenterChunkX = FMath::FloorToInt(PlayerLocation.X / ChunkWorldSize);
 	const int CenterChunkY = FMath::FloorToInt(PlayerLocation.Y / ChunkWorldSize);
+	CurrentCenterChunk = FIntPoint(CenterChunkX, CenterChunkY);
 
 	const int UnloadRadius = StreamRadius + UnloadMargin;
 	const int UnloadRadiusSq = UnloadRadius * UnloadRadius;
@@ -251,6 +285,10 @@ void AWorldGenerator::UpdateStreaming()
 	{
 		if (AGenerateSurface* Chunk = LoadedChunks.FindRef(Key))
 		{
+			if (bPersistEdits)
+			{
+				CaptureChunkEdits(Key, Chunk);
+			}
 			Chunk->Destroy();
 		}
 		LoadedChunks.Remove(Key);
@@ -317,5 +355,176 @@ void AWorldGenerator::UpdateStreaming()
 			}
 		}
 	}
+
+	if (bUseOctreeLOD)
+	{
+		TMap<FIntPoint, int32> DesiredLOD;
+		DesiredLOD.Reserve(LoadedChunks.Num());
+		for (const TPair<FIntPoint, TObjectPtr<AGenerateSurface>>& Pair : LoadedChunks)
+		{
+			DesiredLOD.Add(Pair.Key, ComputeChunkLOD(Pair.Key.X, Pair.Key.Y));
+		}
+
+		if (bBalanceLOD)
+		{
+			bool bChanged = true;
+			int32 Guard = 0;
+			while (bChanged && Guard++ < 8)
+			{
+				bChanged = false;
+				for (TPair<FIntPoint, int32>& Entry : DesiredLOD)
+				{
+					const FIntPoint K = Entry.Key;
+					const FIntPoint Neighbours[4] = {
+						FIntPoint(K.X + 1, K.Y), FIntPoint(K.X - 1, K.Y),
+						FIntPoint(K.X, K.Y + 1), FIntPoint(K.X, K.Y - 1) };
+					int32 MinNeighbour = 5;
+					for (const FIntPoint& N : Neighbours)
+					{
+						if (const int32* NL = DesiredLOD.Find(N))
+						{
+							MinNeighbour = FMath::Min(MinNeighbour, *NL);
+						}
+					}
+					const int32 Capped = FMath::Min(Entry.Value, MinNeighbour + 1);
+					if (Capped != Entry.Value)
+					{
+						Entry.Value = Capped;
+						bChanged = true;
+					}
+				}
+			}
+		}
+
+		auto NeighbourCoarser = [&DesiredLOD](int32 NX, int32 NY, int32 Lod) -> bool
+		{
+			const int32* L = DesiredLOD.Find(FIntPoint(NX, NY));
+			return L != nullptr && (*L > Lod);
+		};
+
+		auto NeighbourFiner = [&DesiredLOD](int32 NX, int32 NY, int32 Lod) -> bool
+		{
+			const int32* L = DesiredLOD.Find(FIntPoint(NX, NY));
+			return L != nullptr && (*L < Lod);
+		};
+
+		for (const TPair<FIntPoint, int32>& Entry : DesiredLOD)
+		{
+			if (AGenerateSurface* C = LoadedChunks.FindRef(Entry.Key))
+			{
+				const FIntPoint K = Entry.Key;
+				const int32 Lod = Entry.Value;
+				int32 Mask = 0;
+				if (NeighbourCoarser(K.X + 1, K.Y, Lod)) Mask |= 1;
+				if (NeighbourCoarser(K.X - 1, K.Y, Lod)) Mask |= 2;
+				if (NeighbourCoarser(K.X, K.Y + 1, Lod)) Mask |= 4;
+				if (NeighbourCoarser(K.X, K.Y - 1, Lod)) Mask |= 8;
+				int32 FinerMask = 0;
+				if (NeighbourFiner(K.X + 1, K.Y, Lod)) FinerMask |= 1;
+				if (NeighbourFiner(K.X - 1, K.Y, Lod)) FinerMask |= 2;
+				if (NeighbourFiner(K.X, K.Y + 1, Lod)) FinerMask |= 4;
+				if (NeighbourFiner(K.X, K.Y - 1, Lod)) FinerMask |= 8;
+				C->SetLODAndTransitions(Lod, Mask, FinerMask);
+			}
+		}
+	}
+}
+
+int32 AWorldGenerator::ComputeChunkLOD(int ChunkX, int ChunkY) const
+{
+	if (!bUseOctreeLOD) return 0;
+	if (DebugForceLOD > 0) return FMath::Clamp(DebugForceLOD, 0, 5);
+	const int dx = ChunkX - CurrentCenterChunk.X;
+	const int dy = ChunkY - CurrentCenterChunk.Y;
+	const float Dist = FMath::Sqrt((float)(dx * dx + dy * dy));
+	const float Over = Dist - (float)LODChunkRadius0;
+	if (Over <= 0.f) return 0;
+	const int32 Lod = FMath::CeilToInt(Over / FMath::Max(1.f, (float)LODChunksPerLevel));
+	return FMath::Clamp(Lod, 0, FMath::Clamp(MaxLOD, 0, 5));
+}
+
+FString AWorldGenerator::EditSavePath() const
+{
+	return FPaths::ProjectSavedDir() / TEXT("VoxelEdits") / FString::Printf(TEXT("edits_%d.bin"), Seed);
+}
+
+void AWorldGenerator::CaptureChunkEdits(const FIntPoint& Key, AGenerateSurface* Chunk)
+{
+	if (!Chunk) return;
+	TMap<int32, float> Edits;
+	Chunk->ExtractEditedVoxels(Edits);
+	if (Edits.Num() > 0)
+	{
+		EditStore.Add(Key, MoveTemp(Edits));
+	}
+	else
+	{
+		EditStore.Remove(Key);
+	}
+}
+
+void AWorldGenerator::SaveEdits()
+{
+	for (const TPair<FIntPoint, TObjectPtr<AGenerateSurface>>& Pair : LoadedChunks)
+	{
+		if (Pair.Value)
+		{
+			CaptureChunkEdits(Pair.Key, Pair.Value);
+		}
+	}
+
+	FBufferArchive Ar;
+	int32 Version = 2;
+	int32 SavedSeed = Seed;
+	int32 SavedSize = Size;
+	Ar << Version;
+	Ar << SavedSeed;
+	Ar << SavedSize;
+	Ar << EditStore;
+
+	const FString Path = EditSavePath();
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+	if (FFileHelper::SaveArrayToFile(Ar, *Path))
+	{
+		UE_LOG(LogTemp, Display, TEXT("[PERSIST] Saved %d edited chunk(s) -> %s"), EditStore.Num(), *Path);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PERSIST] Failed to save edits -> %s"), *Path);
+	}
+	Ar.FlushCache();
+	Ar.Empty();
+}
+
+void AWorldGenerator::LoadEdits()
+{
+	EditStore.Reset();
+
+	const FString Path = EditSavePath();
+	TArray<uint8> Bytes;
+	if (!FFileHelper::LoadFileToArray(Bytes, *Path))
+	{
+		return;
+	}
+
+	FMemoryReader Ar(Bytes, true);
+	int32 Version = 0;
+	int32 SavedSeed = 0;
+	int32 SavedSize = 0;
+	Ar << Version;
+	if (Version != 2)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PERSIST] Edit file version mismatch (%d), ignoring %s"), Version, *Path);
+		return;
+	}
+	Ar << SavedSeed;
+	Ar << SavedSize;
+	if (SavedSize != Size)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PERSIST] Edit file size mismatch (%d vs %d), ignoring %s"), SavedSize, Size, *Path);
+		return;
+	}
+	Ar << EditStore;
+	UE_LOG(LogTemp, Display, TEXT("[PERSIST] Loaded %d edited chunk(s) <- %s"), EditStore.Num(), *Path);
 }
 

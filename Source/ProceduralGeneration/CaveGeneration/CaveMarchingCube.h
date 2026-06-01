@@ -123,6 +123,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Cave Generation")
 	int32 CaveSeed = 1337;
 
+	float TerrainHeightOffsetVoxels = 0.f;
+
 	UPROPERTY(EditAnywhere, Category = "Cave Generation", meta=(ClampMin="0.0"))
 	float MinSeedSpacing = 28.f;
 

@@ -3,6 +3,7 @@
 #include "ProceduralMeshComponent.h"
 #include "Async/ParallelFor.h"
 #include "Async/Async.h"
+#include "ProceduralGeneration/Utils/TransvoxelTables.h"
 
 static const float kVoxelScale = 100.f;
 
@@ -138,6 +139,7 @@ void AGenerateSurface::BuildChunkDataAsync(bool bGenVoxels)
 		Setup();
 		Generate2DHeightMap(GenChunkOrigin / kVoxelScale);
 		ApplyPendingCavesGenTime();
+		ApplyPersistedEditsGenTime();
 		BuildSubChunks();
 	}
 
@@ -164,6 +166,58 @@ void AGenerateSurface::ApplyPendingCavesSync()
 	{
 		CarveCaveSphere(Op.WorldCenter, Op.WorldRadius, Op.bDistorted, Op.MinRoof);
 	}
+}
+
+void AGenerateSurface::SetPersistedEdits(const TMap<int32, float>& InEdits)
+{
+	PendingEdits = InEdits;
+}
+
+void AGenerateSurface::ExtractEditedVoxels(TMap<int32, float>& OutEdits) const
+{
+	OutEdits.Reset();
+	if (OriginalVoxels.Num() != Voxels.Num()) return;
+	OutEdits.Reserve(64);
+	for (int32 i = 0; i < Voxels.Num(); ++i)
+	{
+		if (Voxels[i] != OriginalVoxels[i])
+		{
+			OutEdits.Add(i, Voxels[i]);
+		}
+	}
+}
+
+void AGenerateSurface::ApplyPersistedEditsGenTime()
+{
+	if (PendingEdits.Num() == 0) return;
+	if (Voxels.Num() == 0) return;
+	OriginalVoxels = Voxels;
+	for (const TPair<int32, float>& E : PendingEdits)
+	{
+		if (Voxels.IsValidIndex(E.Key))
+		{
+			Voxels[E.Key] = E.Value;
+		}
+	}
+	PendingEdits.Empty();
+}
+
+void AGenerateSurface::ApplyPersistedEditsSync()
+{
+	if (PendingEdits.Num() == 0) return;
+	if (Voxels.Num() == 0) return;
+	OriginalVoxels = Voxels;
+	bool bAny = false;
+	for (const TPair<int32, float>& E : PendingEdits)
+	{
+		if (Voxels.IsValidIndex(E.Key) && Voxels[E.Key] != E.Value)
+		{
+			Voxels[E.Key] = E.Value;
+			bAny = true;
+		}
+	}
+	PendingEdits.Empty();
+	if (bAny) RebuildAllSubChunks();
 }
 
 void AGenerateSurface::FinishGenerationGameThread()
@@ -206,7 +260,7 @@ void AGenerateSurface::BuildSubChunks()
 	SubChunkCount = FIntVector(
 		FMath::DivideAndRoundUp(Size, SubChunkSize),
 		FMath::DivideAndRoundUp(Size, SubChunkSize),
-		FMath::DivideAndRoundUp(Size, SubChunkSize));
+		FMath::DivideAndRoundUp(SizeZ, SubChunkSize));
 
 	int32 Section = 0;
 	for (int32 cz = 0; cz < SubChunkCount.Z; ++cz)
@@ -218,7 +272,7 @@ void AGenerateSurface::BuildSubChunks()
 		Info.Max = FIntVector(
 			FMath::Min(Info.Min.X + SubChunkSize, Size),
 			FMath::Min(Info.Min.Y + SubChunkSize, Size),
-			FMath::Min(Info.Min.Z + SubChunkSize, Size));
+			FMath::Min(Info.Min.Z + SubChunkSize, SizeZ));
 		Info.SectionIndex = Section++;
 		Info.bCreated = false;
 		SubChunks.Add(Info);
@@ -253,15 +307,57 @@ FVector AGenerateSurface::GradientAtCorner(int32 x, int32 y, int32 z) const
 	const int32 ym = FMath::Max(0, y - 1);
 	const int32 yp = FMath::Min(Size, y + 1);
 	const int32 zm = FMath::Max(0, z - 1);
-	const int32 zp = FMath::Min(Size, z + 1);
+	const int32 zp = FMath::Min(SizeZ, z + 1);
 	return FVector(
 		Voxels[GetVoxelIndex(xp, y, z)] - Voxels[GetVoxelIndex(xm, y, z)],
 		Voxels[GetVoxelIndex(x, yp, z)] - Voxels[GetVoxelIndex(x, ym, z)],
 		Voxels[GetVoxelIndex(x, y, zp)] - Voxels[GetVoxelIndex(x, y, zm)]);
 }
 
+float AGenerateSurface::SampleTransitionCorner(int32 ox, int32 oy, int32 oz, int32 Step) const
+{
+	if (TransitionFaceMask != 0)
+	{
+		const int32 Coarse = Step * 2;
+		int32 FixedAxis = -1;
+		if (((TransitionFaceMask & 1) && ox == Size) || ((TransitionFaceMask & 2) && ox == 0)) FixedAxis = 0;
+		else if (((TransitionFaceMask & 4) && oy == Size) || ((TransitionFaceMask & 8) && oy == 0)) FixedAxis = 1;
+
+		if (FixedAxis >= 0 && Coarse > 1)
+		{
+			int32 P[3] = { ox, oy, oz };
+			const int32 A = (FixedAxis + 1) % 3;
+			const int32 B = (FixedAxis + 2) % 3;
+			const int32 a0 = (P[A] / Coarse) * Coarse;
+			const int32 b0 = (P[B] / Coarse) * Coarse;
+			const int32 a1 = FMath::Min(a0 + Coarse, A == 2 ? SizeZ : Size);
+			const int32 b1 = FMath::Min(b0 + Coarse, B == 2 ? SizeZ : Size);
+			const float fa = (a1 > a0) ? (float)(P[A] - a0) / (float)(a1 - a0) : 0.f;
+			const float fb = (b1 > b0) ? (float)(P[B] - b0) / (float)(b1 - b0) : 0.f;
+			int32 Q[3];
+			Q[FixedAxis] = P[FixedAxis];
+			auto S = [&](int32 av, int32 bv) -> float
+			{
+				Q[A] = av;
+				Q[B] = bv;
+				return Voxels[GetVoxelIndex(Q[0], Q[1], Q[2])];
+			};
+			const float v0 = FMath::Lerp(S(a0, b0), S(a1, b0), fa);
+			const float v1 = FMath::Lerp(S(a0, b1), S(a1, b1), fa);
+			return FMath::Lerp(v0, v1, fb);
+		}
+	}
+	return Voxels[GetVoxelIndex(ox, oy, oz)];
+}
+
 void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) const
 {
+	if (bUseTransvoxelMesher)
+	{
+		BuildSubChunkDataTransvoxel(Idx, Out);
+		return;
+	}
+
 	const FSubChunk& Info = SubChunks[Idx];
 
 	Out.Vertices.Reset();
@@ -284,25 +380,26 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 		{0,0,0,2}, {1,0,0,2}, {1,1,0,2}, {0,1,0,2}
 	};
 
-	const int32 EdgeGridSize = SubChunkSize + 1;
+	const int32 Step = FMath::Clamp(1 << LODLevel, 1, SubChunkSize);
+	const int32 EdgeGridSize = (SubChunkSize / Step) + 1;
 	const int32 NumEdgeIds = EdgeGridSize * EdgeGridSize * EdgeGridSize * 3;
 	TArray<int32>& EdgeToVertex = Out.EdgeToVertex;
 	EdgeToVertex.SetNumUninitialized(NumEdgeIds);
 	FMemory::Memset(EdgeToVertex.GetData(), 0xFF, NumEdgeIds * sizeof(int32));
 
-	for (int32 z = Info.Min.Z; z < Info.Max.Z; ++z)
-	for (int32 y = Info.Min.Y; y < Info.Max.Y; ++y)
-	for (int32 x = Info.Min.X; x < Info.Max.X; ++x)
+	for (int32 z = Info.Min.Z; z < Info.Max.Z; z += Step)
+	for (int32 y = Info.Min.Y; y < Info.Max.Y; y += Step)
+	for (int32 x = Info.Min.X; x < Info.Max.X; x += Step)
 	{
 		float CornerValues[8];
 		FVector CornerPos[8];
 		int32 CubeIndex = 0;
 		for (int32 c = 0; c < 8; ++c)
 		{
-			const int32 ox = x + VertexOffset[c][0];
-			const int32 oy = y + VertexOffset[c][1];
-			const int32 oz = z + VertexOffset[c][2];
-			CornerValues[c] = Voxels[GetVoxelIndex(ox, oy, oz)];
+			const int32 ox = FMath::Min(x + VertexOffset[c][0] * Step, Size);
+			const int32 oy = FMath::Min(y + VertexOffset[c][1] * Step, Size);
+			const int32 oz = FMath::Min(z + VertexOffset[c][2] * Step, SizeZ);
+			CornerValues[c] = SampleTransitionCorner(ox, oy, oz, Step);
 			CornerPos[c] = FVector(ox, oy, oz) * kVoxelScale;
 			if (CornerValues[c] < 0.f) CubeIndex |= (1 << c);
 		}
@@ -313,9 +410,9 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 		FVector CornerGrads[8];
 		bool bGradsComputed = false;
 
-		const int32 lcx = x - Info.Min.X;
-		const int32 lcy = y - Info.Min.Y;
-		const int32 lcz = z - Info.Min.Z;
+		const int32 lcx = (x - Info.Min.X) / Step;
+		const int32 lcy = (y - Info.Min.Y) / Step;
+		const int32 lcz = (z - Info.Min.Z) / Step;
 
 		int32 EdgeVertIndex[12];
 		for (int32 e = 0; e < 12; ++e)
@@ -339,9 +436,9 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			{
 				for (int32 c = 0; c < 8; ++c)
 				{
-					const int32 ox = x + VertexOffset[c][0];
-					const int32 oy = y + VertexOffset[c][1];
-					const int32 oz = z + VertexOffset[c][2];
+					const int32 ox = FMath::Min(x + VertexOffset[c][0] * Step, Size);
+					const int32 oy = FMath::Min(y + VertexOffset[c][1] * Step, Size);
+					const int32 oz = FMath::Min(z + VertexOffset[c][2] * Step, SizeZ);
 					CornerGrads[c] = GradientAtCorner(ox, oy, oz);
 				}
 				bGradsComputed = true;
@@ -376,6 +473,278 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			Out.Triangles.Add(EdgeVertIndex[t0]);
 			Out.Triangles.Add(EdgeVertIndex[t1]);
 			Out.Triangles.Add(EdgeVertIndex[t2]);
+		}
+	}
+}
+
+int32 AGenerateSurface::AddOrReuseVertex(FSubChunkBuildData& Out, TMap<FIntVector, int32>& Dedup, const FVector& Pos, const FVector& Norm) const
+{
+	const FIntVector Key(FMath::RoundToInt(Pos.X * 16.f), FMath::RoundToInt(Pos.Y * 16.f), FMath::RoundToInt(Pos.Z * 16.f));
+	if (const int32* Found = Dedup.Find(Key)) return *Found;
+
+	const int32 NewIdx = Out.Vertices.Num();
+	Out.Vertices.Add(Pos);
+	Out.Normals.Add(Norm);
+	Out.UV0.Add(GetUV(Pos, Norm));
+	Out.Colors.Add(GetVertexColor(Pos, Norm));
+	Dedup.Add(Key, NewIdx);
+	return NewIdx;
+}
+
+FVector AGenerateSurface::ComputeTransitionInset(const FVector& P, const FVector& N) const
+{
+	if (FinerNeighbourMask == 0) return FVector::ZeroVector;
+
+	const float Step = (float)FMath::Clamp(1 << LODLevel, 1, SubChunkSize);
+	const float Ext = (float)Size * kVoxelScale;
+	const float R = Step * kVoxelScale;
+	const float M = Step * kVoxelScale;
+
+	float W = TransitionWidthScale * (Step * 0.5f) * kVoxelScale;
+	W = FMath::Min(W, 0.85f * R);
+	if (W <= 0.f) return FVector::ZeroVector;
+
+	auto Taper = [Ext, M](float c) -> float
+	{
+		return FMath::Clamp(FMath::Min(c, Ext - c) / M, 0.f, 1.f);
+	};
+
+	FVector Off = FVector::ZeroVector;
+
+	if (FinerNeighbourMask & 1)
+	{
+		const float rp = FMath::Clamp(1.f - (Ext - P.X) / R, 0.f, 1.f);
+		Off.X -= W * rp * Taper(P.Y);
+	}
+	if (FinerNeighbourMask & 2)
+	{
+		const float rp = FMath::Clamp(1.f - P.X / R, 0.f, 1.f);
+		Off.X += W * rp * Taper(P.Y);
+	}
+	if (FinerNeighbourMask & 4)
+	{
+		const float rp = FMath::Clamp(1.f - (Ext - P.Y) / R, 0.f, 1.f);
+		Off.Y -= W * rp * Taper(P.X);
+	}
+	if (FinerNeighbourMask & 8)
+	{
+		const float rp = FMath::Clamp(1.f - P.Y / R, 0.f, 1.f);
+		Off.Y += W * rp * Taper(P.X);
+	}
+
+	Off = Off - FVector::DotProduct(Off, N) * N;
+	return Off;
+}
+
+void AGenerateSurface::BuildSubChunkDataTransvoxel(int32 Idx, FSubChunkBuildData& Out) const
+{
+	using namespace Transvoxel;
+
+	const FSubChunk& Info = SubChunks[Idx];
+
+	Out.Vertices.Reset();
+	Out.Triangles.Reset();
+	Out.Normals.Reset();
+	Out.UV0.Reset();
+	Out.Colors.Reset();
+
+	const int32 EstReserve = SubChunkSize * SubChunkSize * 4;
+	Out.Vertices.Reserve(EstReserve);
+	Out.Triangles.Reserve(EstReserve * 3);
+	Out.Normals.Reserve(EstReserve);
+	Out.UV0.Reserve(EstReserve);
+	Out.Colors.Reserve(EstReserve);
+
+	TMap<FIntVector, int32> Dedup;
+	Dedup.Reserve(EstReserve);
+
+	static const int32 LCorner[8][3] =
+	{
+		{0,0,0}, {1,0,0}, {0,1,0}, {1,1,0},
+		{0,0,1}, {1,0,1}, {0,1,1}, {1,1,1}
+	};
+
+	const int32 Step = FMath::Clamp(1 << LODLevel, 1, SubChunkSize);
+
+	for (int32 z = Info.Min.Z; z < Info.Max.Z; z += Step)
+	for (int32 y = Info.Min.Y; y < Info.Max.Y; y += Step)
+	for (int32 x = Info.Min.X; x < Info.Max.X; x += Step)
+	{
+		float CornerValues[8];
+		FVector CornerPos[8];
+		int32 CaseCode = 0;
+		for (int32 c = 0; c < 8; ++c)
+		{
+			const int32 ox = FMath::Min(x + LCorner[c][0] * Step, Size);
+			const int32 oy = FMath::Min(y + LCorner[c][1] * Step, Size);
+			const int32 oz = FMath::Min(z + LCorner[c][2] * Step, SizeZ);
+			CornerValues[c] = Voxels[GetVoxelIndex(ox, oy, oz)];
+			CornerPos[c] = FVector(ox, oy, oz) * kVoxelScale;
+			if (CornerValues[c] < 0.f) CaseCode |= (1 << c);
+		}
+
+		if (CaseCode == 0 || CaseCode == 0xFF) continue;
+
+		const uint8 CellClass = regularCellClass[CaseCode];
+		const RegularCellData& Cell = regularCellData[CellClass & 0x0F];
+		const unsigned short* VertData = regularVertexData[CaseCode];
+		const int32 VertCount = Cell.GetVertexCount();
+		const int32 TriCount = Cell.GetTriangleCount();
+
+		FVector CornerGrads[8];
+		bool bGradsComputed = false;
+
+		int32 LocalVtx[12];
+		for (int32 v = 0; v < VertCount; ++v)
+		{
+			const uint8 Edge = VertData[v] & 0xFF;
+			const int32 a = (Edge >> 4) & 0x0F;
+			const int32 b = Edge & 0x0F;
+
+			const float va = CornerValues[a];
+			const float vb = CornerValues[b];
+			const float denom = vb - va;
+			const float t = FMath::IsNearlyZero(denom) ? 0.5f : (-va / denom);
+
+			const FVector VPos = CornerPos[a] + (CornerPos[b] - CornerPos[a]) * t;
+
+			if (!bGradsComputed)
+			{
+				for (int32 c = 0; c < 8; ++c)
+				{
+					const int32 ox = FMath::Min(x + LCorner[c][0] * Step, Size);
+					const int32 oy = FMath::Min(y + LCorner[c][1] * Step, Size);
+					const int32 oz = FMath::Min(z + LCorner[c][2] * Step, SizeZ);
+					CornerGrads[c] = GradientAtCorner(ox, oy, oz);
+				}
+				bGradsComputed = true;
+			}
+			const FVector VNorm = FMath::Lerp(CornerGrads[a], CornerGrads[b], t).GetSafeNormal();
+			const FVector FinalPos = VPos + ComputeTransitionInset(VPos, VNorm);
+			LocalVtx[v] = AddOrReuseVertex(Out, Dedup, FinalPos, VNorm);
+		}
+
+		for (int32 ti = 0; ti < TriCount * 3; ti += 3)
+		{
+			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 0]]);
+			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 2]]);
+			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 1]]);
+		}
+	}
+
+	if (FinerNeighbourMask != 0)
+	{
+		if ((FinerNeighbourMask & 1) && Info.Max.X == Size) BuildTransitionFace(Info, 0, Out, Dedup);
+		if ((FinerNeighbourMask & 2) && Info.Min.X == 0)    BuildTransitionFace(Info, 1, Out, Dedup);
+		if ((FinerNeighbourMask & 4) && Info.Max.Y == Size) BuildTransitionFace(Info, 2, Out, Dedup);
+		if ((FinerNeighbourMask & 8) && Info.Min.Y == 0)    BuildTransitionFace(Info, 3, Out, Dedup);
+	}
+}
+
+void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir, FSubChunkBuildData& Out, TMap<FIntVector, int32>& Dedup) const
+{
+	using namespace Transvoxel;
+
+	const int32 Sc = FMath::Clamp(1 << LODLevel, 2, SubChunkSize);
+	const int32 Sf = Sc / 2;
+	if (Sf < 1) return;
+
+	FIntVector Fixed, Uvec, Vvec;
+	int32 FixedVal;
+	switch (FaceDir)
+	{
+		case 0:  Fixed = FIntVector(1,0,0); FixedVal = Size; Uvec = FIntVector(0,1,0); Vvec = FIntVector(0,0,1); break;
+		case 1:  Fixed = FIntVector(1,0,0); FixedVal = 0;    Uvec = FIntVector(0,0,1); Vvec = FIntVector(0,1,0); break;
+		case 2:  Fixed = FIntVector(0,1,0); FixedVal = Size; Uvec = FIntVector(0,0,1); Vvec = FIntVector(1,0,0); break;
+		default: Fixed = FIntVector(0,1,0); FixedVal = 0;    Uvec = FIntVector(1,0,0); Vvec = FIntVector(0,0,1); break;
+	}
+
+	auto Dot = [](const FIntVector& A, const FIntVector& B) { return A.X*B.X + A.Y*B.Y + A.Z*B.Z; };
+	const int32 uMin = Dot(Info.Min, Uvec);
+	const int32 uMax = Dot(Info.Max, Uvec);
+	const int32 vMin = Dot(Info.Min, Vvec);
+	const int32 vMax = Dot(Info.Max, Vvec);
+
+	static const int32 Contrib[9]   = {0x001, 0x002, 0x004, 0x080, 0x100, 0x008, 0x040, 0x020, 0x010};
+	static const int32 CornerAlias[4] = {0, 2, 6, 8};
+
+	for (int32 vo = vMin; vo < vMax; vo += Sc)
+	for (int32 uo = uMin; uo < uMax; uo += Sc)
+	{
+		FVector    SamplePos[13];
+		FIntVector SampleVox[13];
+		float      SampleVal[13];
+
+		for (int32 s = 0; s < 9; ++s)
+		{
+			const int32 col = s % 3;
+			const int32 row = s / 3;
+			const int32 uu = FMath::Min(uo + col * Sf, Size);
+			const int32 vv = FMath::Min(vo + row * Sf, Size);
+			const FIntVector Vx = Fixed * FixedVal + Uvec * uu + Vvec * vv;
+			SampleVox[s] = Vx;
+			SampleVal[s] = Voxels[GetVoxelIndex(Vx.X, Vx.Y, Vx.Z)];
+			SamplePos[s] = FVector(Vx.X, Vx.Y, Vx.Z) * kVoxelScale;
+		}
+		for (int32 k = 0; k < 4; ++k)
+		{
+			const int32 a = CornerAlias[k];
+			SampleVox[9 + k] = SampleVox[a];
+			SampleVal[9 + k] = SampleVal[a];
+			SamplePos[9 + k] = SamplePos[a];
+		}
+
+		int32 CaseCode = 0;
+		for (int32 s = 0; s < 9; ++s)
+			if (SampleVal[s] < 0.f) CaseCode |= Contrib[s];
+
+		if (CaseCode == 0 || CaseCode == 0x1FF) continue;
+
+		const uint8 Raw = transitionCellClass[CaseCode];
+		const bool bInvert = (Raw & 0x80) != 0;
+		const TransitionCellData& Cell = transitionCellData[Raw & 0x7F];
+		const unsigned short* VertData = transitionVertexData[CaseCode];
+		const int32 VertCount = Cell.GetVertexCount();
+		const int32 TriCount = Cell.GetTriangleCount();
+
+		int32 LocalVtx[12];
+		for (int32 i = 0; i < VertCount; ++i)
+		{
+			const uint8 Edge = VertData[i] & 0xFF;
+			const int32 a = (Edge >> 4) & 0x0F;
+			const int32 b = Edge & 0x0F;
+
+			const float va = SampleVal[a];
+			const float vb = SampleVal[b];
+			const float denom = vb - va;
+			const float t = FMath::IsNearlyZero(denom) ? 0.5f : (-va / denom);
+
+			const FVector VPos = SamplePos[a] + (SamplePos[b] - SamplePos[a]) * t;
+			const FVector Ga = GradientAtCorner(SampleVox[a].X, SampleVox[a].Y, SampleVox[a].Z);
+			const FVector Gb = GradientAtCorner(SampleVox[b].X, SampleVox[b].Y, SampleVox[b].Z);
+			const FVector VNorm = FMath::Lerp(Ga, Gb, t).GetSafeNormal();
+
+			const bool bHalfRes = (a >= 9 && b >= 9);
+			const FVector FinalPos = bHalfRes ? (VPos + ComputeTransitionInset(VPos, VNorm)) : VPos;
+			LocalVtx[i] = AddOrReuseVertex(Out, Dedup, FinalPos, VNorm);
+		}
+
+		for (int32 ti = 0; ti < TriCount * 3; ti += 3)
+		{
+			const int32 i0 = LocalVtx[Cell.vertexIndex[ti + 0]];
+			const int32 i1 = LocalVtx[Cell.vertexIndex[ti + 1]];
+			const int32 i2 = LocalVtx[Cell.vertexIndex[ti + 2]];
+			Out.Triangles.Add(i0);
+			if (bInvert)
+			{
+				Out.Triangles.Add(i1);
+				Out.Triangles.Add(i2);
+			}
+			else
+			{
+				Out.Triangles.Add(i2);
+				Out.Triangles.Add(i1);
+			}
 		}
 	}
 }
@@ -471,8 +840,9 @@ void AGenerateSurface::MarkVoxelDirty(int32 x, int32 y, int32 z)
 
 void AGenerateSurface::Setup()
 {
+	SizeZ = Size + UndergroundDepth;
 	const int Dim = Size + 1;
-	Voxels.SetNumUninitialized(Dim * Dim * Dim);
+	Voxels.SetNumUninitialized(Dim * Dim * (SizeZ + 1));
 	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
 	TemperatureNoiseValues.SetNumUninitialized(Dim * Dim);
 }
@@ -480,9 +850,11 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 {
 	UE_LOG(LogTemp, Verbose, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
 	const int Dim = Size + 1;
-	Voxels.SetNumUninitialized(Dim * Dim * Dim);
+	const int DimZ = SizeZ + 1;
+	Voxels.SetNumUninitialized(Dim * Dim * DimZ);
 	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
 	TemperatureNoiseValues.SetNumUninitialized(Dim * Dim);
+	SurfaceHeightVoxel.SetNumUninitialized(Dim * Dim);
 
 	const float MaxTerrainHeight = (float)Size * HeightScale * MountainBoost + HeightOffset;
 	if (MaxTerrainHeight >= (float)Size)
@@ -490,7 +862,7 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 		UE_LOG(LogTemp, Verbose, TEXT("[HEIGHTMAP] terrain may clip top of chunk: maxHeight=%.1f, Size=%d. Lower MountainBoost or HeightScale."), MaxTerrainHeight, Size);
 	}
 
-	const float MaxAllowed = (float)Size - 1.0f;
+	const float MaxAllowed = (float)SizeZ - 1.0f;
 	const float PX = Position.X;
 	const float PY = Position.Y;
 	BiomeOriginYVoxel = PY;
@@ -532,10 +904,13 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 				}
 			}
 
+			terrainHeight += (float)UndergroundDepth;
 			if (terrainHeight < 0.2f) terrainHeight = 0.2f;
 			if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
 
-			for (int z = 0; z < Dim; ++z)
+			SurfaceHeightVoxel[x + y * Dim] = terrainHeight;
+
+			for (int z = 0; z < DimZ; ++z)
 			{
 				Voxels[GetVoxelIndex(x, y, z)] = (float)z - terrainHeight;
 			}
@@ -693,7 +1068,7 @@ FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
 
 FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 {
-	const float VoxelHeight = Position.Z / kVoxelScale;
+	const float VoxelHeight = Position.Z / kVoxelScale - (float)UndergroundDepth;
 
 	const int32 Dim = Size + 1;
 	const int32 vx = FMath::Clamp(FMath::RoundToInt(Position.X / kVoxelScale), 0, Size);
@@ -735,6 +1110,12 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 	{
 		const uint8 c = (uint8)(FMath::Clamp(VoxelHeight / FMath::Max(1.0f, (float)Size), 0.0f, 1.0f) * 255.0f);
 		return FColor(c, c, c);
+	}
+
+	const float SurfaceVox = SurfaceHeightVoxel.IsValidIndex(NIdx) ? SurfaceHeightVoxel[NIdx] : 0.f;
+	if (Position.Z / kVoxelScale < SurfaceVox - 2.0f)
+	{
+		return FColor(82, 70, 55);
 	}
 
 	if (VoxelHeight <= SeaLevel)
@@ -826,7 +1207,8 @@ FBox AGenerateSurface::GetWorldAABB() const
 {
 	const FVector Origin = GetActorLocation();
 	const float WorldSize = Size * kVoxelScale;
-	return FBox(Origin, Origin + FVector(WorldSize, WorldSize, WorldSize));
+	const float WorldSizeZ = (Size + UndergroundDepth) * kVoxelScale;
+	return FBox(Origin, Origin + FVector(WorldSize, WorldSize, WorldSizeZ));
 }
 
 void AGenerateSurface::CarveCaveSphere(const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels)
@@ -848,7 +1230,7 @@ void AGenerateSurface::CarveSphereImpl(const FVector& ChunkOrigin, const FVector
 	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - OuterRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + OuterRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + OuterRadius));
-	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + OuterRadius));
+	const int32 MaxZ = FMath::Min(SizeZ - 2, FMath::CeilToInt(LocalCenter.Z + OuterRadius));
 
 	static thread_local FastNoiseLite WallNoise;
 	static thread_local bool bWallNoiseInit = false;
@@ -891,6 +1273,26 @@ void AGenerateSurface::SetChunkCollisionEnabled(bool bEnable)
 	if (bCollisionEnabled == bEnable) return;
 	if (bGenerating) return;
 	bCollisionEnabled = bEnable;
+	KickAsyncBuild(false);
+}
+
+void AGenerateSurface::SetLODLevel(int32 NewLOD)
+{
+	NewLOD = FMath::Clamp(NewLOD, 0, 5);
+	if (NewLOD == LODLevel) return;
+	if (bGenerating) return;
+	LODLevel = NewLOD;
+	KickAsyncBuild(false);
+}
+
+void AGenerateSurface::SetLODAndTransitions(int32 NewLOD, int32 NewMask, int32 NewFinerMask)
+{
+	NewLOD = FMath::Clamp(NewLOD, 0, 5);
+	if (NewLOD == LODLevel && NewMask == TransitionFaceMask && NewFinerMask == FinerNeighbourMask) return;
+	if (bGenerating) return;
+	LODLevel = NewLOD;
+	TransitionFaceMask = NewMask;
+	FinerNeighbourMask = NewFinerMask;
 	KickAsyncBuild(false);
 }
 
@@ -1041,10 +1443,10 @@ void AGenerateSurface::ApplyBrush(const FVector& WorldCenter, float Radius, floa
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(SizeZ - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
@@ -1079,10 +1481,10 @@ void AGenerateSurface::ApplyFlatten(const FVector& WorldCenter, float Radius, fl
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(SizeZ - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
@@ -1116,10 +1518,10 @@ void AGenerateSurface::ApplySmooth(const FVector& WorldCenter, float Radius, flo
 
 	const int32 MinX = FMath::Max(1, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(1, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(2, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size - 1, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size - 1, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(Size - 2, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(SizeZ - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
