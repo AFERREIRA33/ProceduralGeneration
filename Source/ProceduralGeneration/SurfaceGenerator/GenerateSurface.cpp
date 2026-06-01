@@ -532,7 +532,6 @@ FVector AGenerateSurface::ComputeTransitionInset(const FVector& P, const FVector
 		Off.Y += W * rp * Taper(P.X);
 	}
 
-	Off = Off - FVector::DotProduct(Off, N) * N;
 	return Off;
 }
 
@@ -659,6 +658,9 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 		default: Fixed = FIntVector(0,1,0); FixedVal = 0;    Uvec = FIntVector(1,0,0); Vvec = FIntVector(0,0,1); break;
 	}
 
+	const int32 UMaxClamp = (Uvec.Z != 0) ? SizeZ : Size;
+	const int32 VMaxClamp = (Vvec.Z != 0) ? SizeZ : Size;
+
 	auto Dot = [](const FIntVector& A, const FIntVector& B) { return A.X*B.X + A.Y*B.Y + A.Z*B.Z; };
 	const int32 uMin = Dot(Info.Min, Uvec);
 	const int32 uMax = Dot(Info.Max, Uvec);
@@ -679,8 +681,8 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 		{
 			const int32 col = s % 3;
 			const int32 row = s / 3;
-			const int32 uu = FMath::Min(uo + col * Sf, Size);
-			const int32 vv = FMath::Min(vo + row * Sf, Size);
+			const int32 uu = FMath::Min(uo + col * Sf, UMaxClamp);
+			const int32 vv = FMath::Min(vo + row * Sf, VMaxClamp);
 			const FIntVector Vx = Fixed * FixedVal + Uvec * uu + Vvec * vv;
 			SampleVox[s] = Vx;
 			SampleVal[s] = Voxels[GetVoxelIndex(Vx.X, Vx.Y, Vx.Z)];
@@ -701,7 +703,6 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 		if (CaseCode == 0 || CaseCode == 0x1FF) continue;
 
 		const uint8 Raw = transitionCellClass[CaseCode];
-		const bool bInvert = (Raw & 0x80) != 0;
 		const TransitionCellData& Cell = transitionCellData[Raw & 0x7F];
 		const unsigned short* VertData = transitionVertexData[CaseCode];
 		const int32 VertCount = Cell.GetVertexCount();
@@ -727,6 +728,7 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 			const bool bHalfRes = (a >= 9 && b >= 9);
 			const FVector FinalPos = bHalfRes ? (VPos + ComputeTransitionInset(VPos, VNorm)) : VPos;
 			LocalVtx[i] = AddOrReuseVertex(Out, Dedup, FinalPos, VNorm);
+			if (bDebugTransitionColor && Out.Colors.IsValidIndex(LocalVtx[i])) Out.Colors[LocalVtx[i]] = FColor(255, 0, 0, 255);
 		}
 
 		for (int32 ti = 0; ti < TriCount * 3; ti += 3)
@@ -734,8 +736,10 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 			const int32 i0 = LocalVtx[Cell.vertexIndex[ti + 0]];
 			const int32 i1 = LocalVtx[Cell.vertexIndex[ti + 1]];
 			const int32 i2 = LocalVtx[Cell.vertexIndex[ti + 2]];
+			const FVector GeoN = FVector::CrossProduct(Out.Vertices[i1] - Out.Vertices[i0], Out.Vertices[i2] - Out.Vertices[i0]);
+			const FVector AvgN = Out.Normals[i0] + Out.Normals[i1] + Out.Normals[i2];
 			Out.Triangles.Add(i0);
-			if (bInvert)
+			if (FVector::DotProduct(GeoN, AvgN) > 0.f)
 			{
 				Out.Triangles.Add(i1);
 				Out.Triangles.Add(i2);

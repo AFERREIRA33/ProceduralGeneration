@@ -172,6 +172,7 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	chunk->LODLevel = ComputeChunkLOD(ChunkX, ChunkY);
 	chunk->bUseTransvoxelMesher = bUseTransvoxelMesher;
 	chunk->TransitionWidthScale = TransitionWidthScale;
+	chunk->bDebugTransitionColor = bDebugTransitionColor;
 
 	if (bEnableCaves && CaveActor)
 	{

@@ -161,10 +161,13 @@ public:
 	bool bBalanceLOD = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
-	bool bUseTransvoxelMesher = false;
+	bool bUseTransvoxelMesher = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.0", UIMin="0.0", UIMax="4.0"))
-	float TransitionWidthScale = 0.5f;
+	float TransitionWidthScale = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bDebugTransitionColor = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Persistence")
 	bool bPersistEdits = true;
