@@ -70,7 +70,23 @@ void ATerrainEditorHUD::DrawHUD()
 	if (!Player || !Player->TerrainEditor || !bShowBrushPanel) return;
 
 	UTerrainEditorComponent* Editor = Player->TerrainEditor;
-	if (!Editor->IsToolActive()) return;
+	if (!Editor->IsToolActive())
+	{
+		if (bShowEditPrompt)
+		{
+			const float PromptH = LineHeight + PanelPadding * 2;
+			FVector2D PromptInner;
+			DrawPanel(BrushAnchor, EditPromptPanelWidth, PromptH, PromptInner);
+			float TextW = 0.f, TextH = 0.f;
+			Canvas->TextSize(Font, EditPrompt, TextW, TextH);
+			const float InnerWidth = EditPromptPanelWidth - PanelPadding * 2.f;
+			const float CenteredX = PromptInner.X + FMath::Max(0.f, (InnerWidth - TextW) * 0.5f);
+			FCanvasTextItem PromptText(FVector2D(CenteredX, PromptInner.Y), FText::FromString(EditPrompt), Font, EditPromptColor);
+			PromptText.EnableShadow(FLinearColor::Black);
+			Canvas->DrawItem(PromptText);
+		}
+		return;
+	}
 
 	int32 BrushLines = 3;
 	if (bShowKeyHints) BrushLines += 6;

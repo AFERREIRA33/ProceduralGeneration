@@ -149,7 +149,7 @@ public:
 	void CarveChunk(AGenerateSurface* Chunk) const;
 	bool IsCarvePlanReady() const { return bCarvePlanReady; }
 
-	TArray<FCaveCarveOp> GetTileOps(const FBox& ChunkAABB);
+	TArray<FCaveCarveOp> GetTileOps(const FBox& ChunkAABB, float FloorOverrideZ = 3.4e38f, float BandTopVoxelsOverride = -1.0f);
 	float GetCaveMinRoofDepth() const { return CaveMinRoofDepth; }
 
 	bool bStreamingManaged = false;
@@ -166,7 +166,7 @@ private:
 	void StepCaveGeneration();
 	bool PlaceSeedsAndStart();
 
-	void BuildTileCarveOps(const FIntPoint& Tile, float FloorWorldZ, float TileVoxWidth, TArray<FCaveCarveOp>& Out);
+	void BuildTileCarveOps(const FIntPoint& Tile, float FloorWorldZ, float TileVoxWidth, TArray<FCaveCarveOp>& Out, float BandTopOverride = -1.0f);
 	int32 GetTileSeed(const FIntPoint& Tile) const;
 
 	void CarveCaveInTerrains(const FVector& WorldCenter, float WorldRadius, bool bDistorted);

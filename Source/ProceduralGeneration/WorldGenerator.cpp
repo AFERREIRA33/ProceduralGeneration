@@ -60,7 +60,14 @@ void AWorldGenerator::Tick(float DeltaTime)
 		AnchorStreaming();
 		return;
 	}
-	UpdateStreaming();
+	if (bUseOctreeStreaming)
+	{
+		UpdateStreamingOctree();
+	}
+	else
+	{
+		UpdateStreaming();
+	}
 }
 void AWorldGenerator::GenerateWorld()
 {
@@ -119,21 +126,8 @@ void AWorldGenerator::GenerateWorld()
 	UE_LOG(LogTemp, Display, TEXT("[PERF] World gen: %d chunks in %.1f ms (avg %.2f ms/chunk)"), TotalChunks, GenMs, GenMs / FMath::Max(1, TotalChunks));
 }
 
-AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWantCollision)
+void AWorldGenerator::ConfigureChunkCommon(AGenerateSurface* chunk, bool bWantCollision)
 {
-	const FIntPoint Key(ChunkX, ChunkY);
-	if (LoadedChunks.Contains(Key))
-	{
-		return LoadedChunks[Key];
-	}
-
-	const float ChunkWorldSize = Size * 100.0f;
-	const FVector position = FVector(ChunkX * ChunkWorldSize, ChunkY * ChunkWorldSize, StreamSurfaceZ);
-	AGenerateSurface* chunk = GetWorld()->SpawnActor<AGenerateSurface>(position, FRotator::ZeroRotator);
-	if (!chunk)
-	{
-		return nullptr;
-	}
 	chunk->Material = Material;
 	chunk->Frequency = Frequency;
 	chunk->Seed = Seed;
@@ -149,6 +143,7 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	chunk->SeaLevel = SeaLevel;
 	chunk->BiomeFrequency = BiomeFrequency;
 	chunk->SnowLevel = SnowLevel;
+	chunk->BeachWidthVoxels = BeachWidthVoxels;
 	chunk->BiomeHeightCooling = BiomeHeightCooling;
 	chunk->BiomeHeightDrying = BiomeHeightDrying;
 	chunk->BiomeDebugView = BiomeDebugView;
@@ -169,10 +164,30 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	chunk->bCastShadows = bChunksCastShadows;
 	chunk->bCollisionEnabled = bWantCollision;
 	chunk->bEnableAutoLODGeneration = false;
-	chunk->LODLevel = ComputeChunkLOD(ChunkX, ChunkY);
+	chunk->SurfaceRefZ = StreamSurfaceZ;
+	chunk->bCubicNode = false;
 	chunk->bUseTransvoxelMesher = bUseTransvoxelMesher;
 	chunk->TransitionWidthScale = TransitionWidthScale;
 	chunk->bDebugTransitionColor = bDebugTransitionColor;
+}
+
+AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWantCollision)
+{
+	const FIntPoint Key(ChunkX, ChunkY);
+	if (LoadedChunks.Contains(Key))
+	{
+		return LoadedChunks[Key];
+	}
+
+	const float ChunkWorldSize = Size * 100.0f;
+	const FVector position = FVector(ChunkX * ChunkWorldSize, ChunkY * ChunkWorldSize, StreamSurfaceZ);
+	AGenerateSurface* chunk = GetWorld()->SpawnActor<AGenerateSurface>(position, FRotator::ZeroRotator);
+	if (!chunk)
+	{
+		return nullptr;
+	}
+	ConfigureChunkCommon(chunk, bWantCollision);
+	chunk->LODLevel = ComputeChunkLOD(ChunkX, ChunkY);
 
 	if (bEnableCaves && CaveActor)
 	{
@@ -201,6 +216,308 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 
 	LoadedChunks.Add(Key, chunk);
 	return chunk;
+}
+
+AGenerateSurface* AWorldGenerator::SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, bool bWantCollision)
+{
+	const FOctreeNodeKey Key{ CellX, CellY, CellZ, NodeScale };
+	if (OctreeChunks.Contains(Key))
+	{
+		return OctreeChunks[Key];
+	}
+
+	const float BaseChunk = Size * 100.0f;
+	const FVector position = FVector((float)CellX * BaseChunk, (float)CellY * BaseChunk, (float)CellZ * BaseChunk);
+	AGenerateSurface* chunk = GetWorld()->SpawnActor<AGenerateSurface>(position, FRotator::ZeroRotator);
+	if (!chunk)
+	{
+		return nullptr;
+	}
+	ConfigureChunkCommon(chunk, bWantCollision);
+	chunk->LODLevel = 0;
+	chunk->NodeScale = NodeScale;
+	chunk->kVoxelScale = 100.0f * (float)NodeScale;
+	chunk->bCubicNode = true;
+	chunk->UndergroundDepth = 0;
+	chunk->NodeOriginZ = (float)CellZ * BaseChunk;
+	chunk->bUseTransvoxelMesher = false;
+	chunk->TransitionFaceMask = TransMask;
+
+	if (bEnableCaves && CaveActor && NodeScale == 1)
+	{
+		const float RockDepthWorld = BaseChunk * OctreeRockDepthScale;
+		const float CaveFloorZ = StreamSurfaceZ - RockDepthWorld;
+		const float CaveBandTopVoxels = RockDepthWorld / 100.0f + 20.0f;
+		TArray<FCaveCarveOp> Ops = CaveActor->GetTileOps(chunk->GetWorldAABB(), CaveFloorZ, CaveBandTopVoxels);
+		chunk->SetPendingCaveData(MoveTemp(Ops), CaveActor->GetCaveMinRoofDepth());
+	}
+
+	if (bPersistEdits)
+	{
+		if (const TMap<int32, float>* Edits = OctreeEditStore.Find(Key))
+		{
+			chunk->SetPersistedEdits(*Edits);
+		}
+	}
+
+	if (bAsyncGeneration)
+	{
+		chunk->StartGenerationAsync();
+	}
+	else
+	{
+		chunk->StartGeneration();
+	}
+
+	OctreeChunks.Add(Key, chunk);
+	return chunk;
+}
+
+float AWorldGenerator::SampleSurfaceWorldZ(float WorldX, float WorldY)
+{
+	const float n = StreamHeightNoise.GetNoise(WorldX / 100.0f, WorldY / 100.0f);
+	const float n01 = FMath::Pow(FMath::Clamp((n + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f), HeightRedistribution);
+	const float base = n01 * (float)Size * HeightScale * MountainBoost;
+	return StreamSurfaceZ + base * 100.0f;
+}
+
+bool AWorldGenerator::NodeIntersectsSurface(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale)
+{
+	const float BaseChunk = Size * 100.0f;
+	const float X0 = (float)CellX * BaseChunk;
+	const float Y0 = (float)CellY * BaseChunk;
+	const float Span = (float)NodeScale * BaseChunk;
+	const float NodeMinZ = (float)CellZ * BaseChunk;
+	const float NodeMaxZ = NodeMinZ + Span;
+
+	float MaxS = -FLT_MAX;
+	for (int32 i = 0; i <= 2; ++i)
+	for (int32 j = 0; j <= 2; ++j)
+	{
+		const float s = SampleSurfaceWorldZ(X0 + Span * 0.5f * (float)i, Y0 + Span * 0.5f * (float)j);
+		MaxS = FMath::Max(MaxS, s);
+	}
+	const float MinS = StreamSurfaceZ - BaseChunk * OctreeRockDepthScale;
+	return NodeMaxZ > MinS && NodeMinZ < MaxS + BaseChunk * 0.25f;
+}
+
+int32 AWorldGenerator::NaturalScale(const FVector& Point, const FVector& PlayerLoc)
+{
+	const float BaseChunk = Size * 100.0f;
+	const float d = FVector::Dist(Point, PlayerLoc);
+	const int32 MaxScale = 1 << FMath::Clamp(MaxLOD, 0, 5);
+	const float ratio = d / (OctreeSubdivFactor * BaseChunk);
+	int32 sc = 1;
+	while (sc * 2 <= ratio && sc < MaxScale)
+	{
+		sc *= 2;
+	}
+	return sc;
+}
+
+int32 AWorldGenerator::ComputeNodeTransitionMask(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc)
+{
+	const float BaseChunk = Size * 100.0f;
+	const float NodeWorld = (float)NodeScale * BaseChunk;
+	const float cx = ((float)CellX + (float)NodeScale * 0.5f) * BaseChunk;
+	const float cy = ((float)CellY + (float)NodeScale * 0.5f) * BaseChunk;
+	const float cz = ((float)CellZ + (float)NodeScale * 0.5f) * BaseChunk;
+	const float Off = NodeWorld * 0.75f;
+	int32 Mask = 0;
+	if (NaturalScale(FVector(cx + Off, cy, cz), PlayerLoc) > NodeScale) Mask |= 1;
+	if (NaturalScale(FVector(cx - Off, cy, cz), PlayerLoc) > NodeScale) Mask |= 2;
+	if (NaturalScale(FVector(cx, cy + Off, cz), PlayerLoc) > NodeScale) Mask |= 4;
+	if (NaturalScale(FVector(cx, cy - Off, cz), PlayerLoc) > NodeScale) Mask |= 8;
+	return Mask;
+}
+
+void AWorldGenerator::SubdivideOctree(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc, TArray<FOctreeNodeKey>& Out)
+{
+	if (!NodeIntersectsSurface(CellX, CellY, CellZ, NodeScale))
+	{
+		return;
+	}
+	if (NodeScale > 1)
+	{
+		const float BaseChunk = Size * 100.0f;
+		const float NodeWorld = (float)NodeScale * BaseChunk;
+		const float cx = ((float)CellX + (float)NodeScale * 0.5f) * BaseChunk;
+		const float cy = ((float)CellY + (float)NodeScale * 0.5f) * BaseChunk;
+		const float cz = ((float)CellZ + (float)NodeScale * 0.5f) * BaseChunk;
+		const float dx = PlayerLoc.X - cx;
+		const float dy = PlayerLoc.Y - cy;
+		const float dz = PlayerLoc.Z - cz;
+		const float Dist = FMath::Sqrt(dx * dx + dy * dy + dz * dz);
+		bool bSubdivide = (Dist < NodeWorld * OctreeSubdivFactor);
+		if (!bSubdivide)
+		{
+			const float Off = NodeWorld * 0.75f;
+			if (NaturalScale(FVector(cx + Off, cy, cz), PlayerLoc) * 2 < NodeScale ||
+				NaturalScale(FVector(cx - Off, cy, cz), PlayerLoc) * 2 < NodeScale ||
+				NaturalScale(FVector(cx, cy + Off, cz), PlayerLoc) * 2 < NodeScale ||
+				NaturalScale(FVector(cx, cy - Off, cz), PlayerLoc) * 2 < NodeScale)
+			{
+				bSubdivide = true;
+			}
+		}
+		if (bSubdivide)
+		{
+			const int32 h = NodeScale / 2;
+			for (int32 oz = 0; oz <= h; oz += h)
+			for (int32 oy = 0; oy <= h; oy += h)
+			for (int32 ox = 0; ox <= h; ox += h)
+			{
+				SubdivideOctree(CellX + ox, CellY + oy, CellZ + oz, h, PlayerLoc, Out);
+			}
+			return;
+		}
+	}
+	Out.Add(FOctreeNodeKey{ CellX, CellY, CellZ, NodeScale });
+}
+
+void AWorldGenerator::CollectOctreeLeaves(const FVector& PlayerLoc, TArray<FOctreeNodeKey>& Out)
+{
+	const float BaseChunk = Size * 100.0f;
+	const int32 MaxScale = 1 << FMath::Clamp(MaxLOD, 0, 5);
+	auto AlignDown = [](int32 v, int32 a) { return (int32)(FMath::FloorToInt((float)v / (float)a)) * a; };
+	const int32 pcx = FMath::FloorToInt(PlayerLoc.X / BaseChunk);
+	const int32 pcy = FMath::FloorToInt(PlayerLoc.Y / BaseChunk);
+	const int32 minCX = AlignDown(pcx - StreamRadius, MaxScale);
+	const int32 maxCX = AlignDown(pcx + StreamRadius, MaxScale);
+	const int32 minCY = AlignDown(pcy - StreamRadius, MaxScale);
+	const int32 maxCY = AlignDown(pcy + StreamRadius, MaxScale);
+	const float BandMaxZ = StreamSurfaceZ + (float)Size * HeightScale * MountainBoost * 100.0f + BaseChunk;
+	const float BandMinZ = StreamSurfaceZ - BaseChunk * OctreeRockDepthScale - BaseChunk;
+	const int32 minCZ = AlignDown(FMath::FloorToInt(BandMinZ / BaseChunk), MaxScale);
+	const int32 maxCZ = AlignDown(FMath::FloorToInt(BandMaxZ / BaseChunk), MaxScale);
+	for (int32 cx = minCX; cx <= maxCX; cx += MaxScale)
+	for (int32 cy = minCY; cy <= maxCY; cy += MaxScale)
+	for (int32 cz = minCZ; cz <= maxCZ; cz += MaxScale)
+	{
+		SubdivideOctree(cx, cy, cz, MaxScale, PlayerLoc, Out);
+	}
+}
+
+bool AWorldGenerator::IsReplacementReady(const FOctreeNodeKey& Key, const TSet<FOctreeNodeKey>& DesiredSet)
+{
+	const int32 h = Key.S / 2;
+	if (h >= 1)
+	{
+		bool bAnyChild = false;
+		bool bAllReady = true;
+		for (int32 oz = 0; oz <= h; oz += h)
+		for (int32 oy = 0; oy <= h; oy += h)
+		for (int32 ox = 0; ox <= h; ox += h)
+		{
+			const FOctreeNodeKey C{ Key.X + ox, Key.Y + oy, Key.Z + oz, h };
+			if (DesiredSet.Contains(C))
+			{
+				bAnyChild = true;
+				AGenerateSurface* CC = OctreeChunks.FindRef(C);
+				if (!CC || CC->IsGenerating()) bAllReady = false;
+			}
+		}
+		if (bAnyChild) return bAllReady;
+	}
+	const int32 P = Key.S * 2;
+	auto AlignDown = [](int32 v, int32 a) { return (int32)(FMath::FloorToInt((float)v / (float)a)) * a; };
+	const FOctreeNodeKey Par{ AlignDown(Key.X, P), AlignDown(Key.Y, P), AlignDown(Key.Z, P), P };
+	if (DesiredSet.Contains(Par))
+	{
+		AGenerateSurface* PC = OctreeChunks.FindRef(Par);
+		return PC != nullptr && !PC->IsGenerating();
+	}
+	return true;
+}
+
+void AWorldGenerator::UpdateStreamingOctree()
+{
+	const APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+	if (!PlayerPawn)
+	{
+		return;
+	}
+	const FVector PlayerLocation = PlayerPawn->GetActorLocation();
+
+	TArray<FOctreeNodeKey> Desired;
+	CollectOctreeLeaves(PlayerLocation, Desired);
+	TSet<FOctreeNodeKey> DesiredSet(Desired);
+
+	TArray<FOctreeNodeKey> ToUnload;
+	for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+	{
+		if (!DesiredSet.Contains(Pair.Key))
+		{
+			if (Pair.Value && Pair.Value->IsGenerating()) continue;
+			if (!IsReplacementReady(Pair.Key, DesiredSet)) continue;
+			ToUnload.Add(Pair.Key);
+		}
+	}
+	for (const FOctreeNodeKey& Key : ToUnload)
+	{
+		if (AGenerateSurface* Chunk = OctreeChunks.FindRef(Key))
+		{
+			if (bPersistEdits) CaptureChunkEdits(Key, Chunk);
+			Chunk->Destroy();
+		}
+		OctreeChunks.Remove(Key);
+	}
+
+	const float BaseChunk = Size * 100.0f;
+	TArray<FOctreeNodeKey> Missing;
+	TArray<float> MissingDist;
+	for (const FOctreeNodeKey& Key : Desired)
+	{
+		if (OctreeChunks.Contains(Key)) continue;
+		const float cx = ((float)Key.X + (float)Key.S * 0.5f) * BaseChunk;
+		const float cy = ((float)Key.Y + (float)Key.S * 0.5f) * BaseChunk;
+		const float cz = ((float)Key.Z + (float)Key.S * 0.5f) * BaseChunk;
+		const float dx = PlayerLocation.X - cx;
+		const float dy = PlayerLocation.Y - cy;
+		const float dz = PlayerLocation.Z - cz;
+		Missing.Add(Key);
+		MissingDist.Add(dx * dx + dy * dy + dz * dz);
+	}
+
+	const int Budget = FMath::Max(1, MaxChunksPerFrame);
+	int Spawned = 0;
+	while (Spawned < Budget && Missing.Num() > 0)
+	{
+		int BestIdx = 0;
+		for (int i = 1; i < Missing.Num(); ++i)
+		{
+			if (MissingDist[i] < MissingDist[BestIdx]) BestIdx = i;
+		}
+		const FOctreeNodeKey Key = Missing[BestIdx];
+		const int32 TransMask = ComputeNodeTransitionMask(Key.X, Key.Y, Key.Z, Key.S, PlayerLocation);
+		const float ncx = ((float)Key.X + 0.5f) * BaseChunk;
+		const float ncy = ((float)Key.Y + 0.5f) * BaseChunk;
+		const float ncz = ((float)Key.Z + 0.5f) * BaseChunk;
+		const float CollR = OctreeCollisionRadiusChunks * BaseChunk;
+		const bool bWantCollision = bChunkCollision && (Key.S == 1) && FVector::DistSquared(FVector(ncx, ncy, ncz), PlayerLocation) < CollR * CollR;
+		SpawnNodeChunk(Key.X, Key.Y, Key.Z, Key.S, TransMask, bWantCollision);
+		Missing.RemoveAtSwap(BestIdx);
+		MissingDist.RemoveAtSwap(BestIdx);
+		++Spawned;
+	}
+
+	if (bChunkCollision)
+	{
+		const float CollRadius = OctreeCollisionRadiusChunks * BaseChunk;
+		const float CollRadius2 = CollRadius * CollRadius;
+		for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+		{
+			AGenerateSurface* Chunk = Pair.Value;
+			if (!Chunk || Pair.Key.S != 1) continue;
+			const float ccx = ((float)Pair.Key.X + 0.5f) * BaseChunk;
+			const float ccy = ((float)Pair.Key.Y + 0.5f) * BaseChunk;
+			const float ccz = ((float)Pair.Key.Z + 0.5f) * BaseChunk;
+			if (FVector::DistSquared(FVector(ccx, ccy, ccz), PlayerLocation) < CollRadius2)
+			{
+				Chunk->SetChunkCollisionEnabled(true);
+			}
+		}
+	}
 }
 
 void AWorldGenerator::AnchorStreaming()
@@ -233,7 +550,8 @@ void AWorldGenerator::AnchorStreaming()
 
 	const float PlayerTerrainNoise = HeightNoise.GetNoise(PlayerLocation.X / 100.0f, PlayerLocation.Y / 100.0f);
 	const float PlayerN01 = FMath::Pow(FMath::Clamp((PlayerTerrainNoise + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f), HeightRedistribution);
-	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset + UndergroundDepth) * 100.0f;
+	const int32 EffUndergroundDepth = bUseOctreeStreaming ? 0 : UndergroundDepth;
+	const float PlayerTerrainHeight = (PlayerN01 * Size * HeightScale * MountainBoost + HeightOffset + EffUndergroundDepth) * 100.0f;
 	StreamSurfaceZ = PlayerFootZ - PlayerTerrainHeight - SurfaceLevel * 100.0f;
 
 	if (bEnableCaves)
@@ -251,6 +569,14 @@ void AWorldGenerator::AnchorStreaming()
 			}
 		}
 	}
+
+	StreamHeightNoise.SetSeed(Seed);
+	StreamHeightNoise.SetFrequency(Frequency);
+	StreamHeightNoise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+	StreamHeightNoise.SetFractalType(FastNoiseLite::FractalType_FBm);
+	StreamHeightNoise.SetFractalOctaves(FractalOctaves);
+	StreamHeightNoise.SetFractalLacunarity(FractalLacunarity);
+	StreamHeightNoise.SetFractalGain(FractalGain);
 
 	bStreamAnchored = true;
 }
@@ -464,6 +790,21 @@ void AWorldGenerator::CaptureChunkEdits(const FIntPoint& Key, AGenerateSurface* 
 	}
 }
 
+void AWorldGenerator::CaptureChunkEdits(const FOctreeNodeKey& Key, AGenerateSurface* Chunk)
+{
+	if (!Chunk) return;
+	TMap<int32, float> Edits;
+	Chunk->ExtractEditedVoxels(Edits);
+	if (Edits.Num() > 0)
+	{
+		OctreeEditStore.Add(Key, MoveTemp(Edits));
+	}
+	else
+	{
+		OctreeEditStore.Remove(Key);
+	}
+}
+
 void AWorldGenerator::SaveEdits()
 {
 	for (const TPair<FIntPoint, TObjectPtr<AGenerateSurface>>& Pair : LoadedChunks)
@@ -473,21 +814,29 @@ void AWorldGenerator::SaveEdits()
 			CaptureChunkEdits(Pair.Key, Pair.Value);
 		}
 	}
+	for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+	{
+		if (Pair.Value)
+		{
+			CaptureChunkEdits(Pair.Key, Pair.Value);
+		}
+	}
 
 	FBufferArchive Ar;
-	int32 Version = 2;
+	int32 Version = 3;
 	int32 SavedSeed = Seed;
 	int32 SavedSize = Size;
 	Ar << Version;
 	Ar << SavedSeed;
 	Ar << SavedSize;
 	Ar << EditStore;
+	Ar << OctreeEditStore;
 
 	const FString Path = EditSavePath();
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
 	if (FFileHelper::SaveArrayToFile(Ar, *Path))
 	{
-		UE_LOG(LogTemp, Display, TEXT("[PERSIST] Saved %d edited chunk(s) -> %s"), EditStore.Num(), *Path);
+		UE_LOG(LogTemp, Display, TEXT("[PERSIST] Saved %d + %d edited chunk(s) -> %s"), EditStore.Num(), OctreeEditStore.Num(), *Path);
 	}
 	else
 	{
@@ -500,6 +849,7 @@ void AWorldGenerator::SaveEdits()
 void AWorldGenerator::LoadEdits()
 {
 	EditStore.Reset();
+	OctreeEditStore.Reset();
 
 	const FString Path = EditSavePath();
 	TArray<uint8> Bytes;
@@ -513,7 +863,7 @@ void AWorldGenerator::LoadEdits()
 	int32 SavedSeed = 0;
 	int32 SavedSize = 0;
 	Ar << Version;
-	if (Version != 2)
+	if (Version != 3)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[PERSIST] Edit file version mismatch (%d), ignoring %s"), Version, *Path);
 		return;
@@ -526,6 +876,7 @@ void AWorldGenerator::LoadEdits()
 		return;
 	}
 	Ar << EditStore;
-	UE_LOG(LogTemp, Display, TEXT("[PERSIST] Loaded %d edited chunk(s) <- %s"), EditStore.Num(), *Path);
+	Ar << OctreeEditStore;
+	UE_LOG(LogTemp, Display, TEXT("[PERSIST] Loaded %d + %d edited chunk(s) <- %s"), EditStore.Num(), OctreeEditStore.Num(), *Path);
 }
 

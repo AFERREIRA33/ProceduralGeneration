@@ -26,6 +26,11 @@ public:
 
 	int UndergroundDepth = 32;
 	int SizeZ = 96;
+	int NodeScale = 1;
+	float kVoxelScale = 100.f;
+	bool bCubicNode = false;
+	float SurfaceRefZ = 0.f;
+	float NodeOriginZ = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.1"))
 	float HeightRedistribution = 4.0f;
@@ -44,6 +49,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome")
 	float SnowLevel = 88.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0"))
+	float BeachWidthVoxels = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
 	float BiomeHeightCooling = 0.25f;
@@ -190,10 +198,13 @@ private:
 	TMap<int32, float> PendingEdits;
 	bool bGenerating = false;
 	FVector GenChunkOrigin = FVector::ZeroVector;
+	int32 PendingUploadIdx = -1;
+	int32 UploadSubChunksPerFrame = 4;
 
 	void KickAsyncBuild(bool bGenVoxels);
 	void BuildChunkDataAsync(bool bGenVoxels);
 	void FinishGenerationGameThread();
+	void StepUpload();
 	void ApplyPendingCavesGenTime();
 	void ApplyPersistedEditsGenTime();
 	void CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty);

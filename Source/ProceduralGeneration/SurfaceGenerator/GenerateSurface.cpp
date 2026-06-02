@@ -5,7 +5,7 @@
 #include "Async/Async.h"
 #include "ProceduralGeneration/Utils/TransvoxelTables.h"
 
-static const float kVoxelScale = 100.f;
+static constexpr float kBaseVoxel = 100.f;
 
 AGenerateSurface::AGenerateSurface()
 {
@@ -53,7 +53,7 @@ void AGenerateSurface::StartGeneration()
 	Setup();
 
 	const double T0 = FPlatformTime::Seconds();
-	Generate2DHeightMap(GetActorLocation() / kVoxelScale);
+	Generate2DHeightMap(GetActorLocation() / kBaseVoxel);
 	const double T1 = FPlatformTime::Seconds();
 
 	if (Material) Mesh->SetMaterial(0, Material);
@@ -137,7 +137,7 @@ void AGenerateSurface::BuildChunkDataAsync(bool bGenVoxels)
 	if (bGenVoxels)
 	{
 		Setup();
-		Generate2DHeightMap(GenChunkOrigin / kVoxelScale);
+		Generate2DHeightMap(GenChunkOrigin / kBaseVoxel);
 		ApplyPendingCavesGenTime();
 		ApplyPersistedEditsGenTime();
 		BuildSubChunks();
@@ -222,29 +222,49 @@ void AGenerateSurface::ApplyPersistedEditsSync()
 
 void AGenerateSurface::FinishGenerationGameThread()
 {
-	const double T0 = FPlatformTime::Seconds();
-
 	Mesh->ClearAllMeshSections();
-
 	const int32 N = SubChunks.Num();
 	for (int32 i = 0; i < N; ++i)
 	{
 		UploadSubChunk(i, CachedBuilds[i]);
 	}
-
 	if (Material) Mesh->SetMaterial(0, Material);
 	Mesh->SetCastShadow(bCastShadows);
-
 	DirtySubChunks.Reset();
 	bGenerating = false;
+}
 
-	const double UploadMs = (FPlatformTime::Seconds() - T0) * 1000.0;
-	UE_LOG(LogTemp, Display, TEXT("[PERF ASYNC] gamethread upload=%.2fms subchunks=%d collision=%d"), UploadMs, N, bCollisionEnabled ? 1 : 0);
+void AGenerateSurface::StepUpload()
+{
+	const int32 N = SubChunks.Num();
+	int32 Done = 0;
+	while (PendingUploadIdx < N && Done < FMath::Max(1, UploadSubChunksPerFrame))
+	{
+		if (CachedBuilds.IsValidIndex(PendingUploadIdx))
+		{
+			UploadSubChunk(PendingUploadIdx, CachedBuilds[PendingUploadIdx]);
+		}
+		++PendingUploadIdx;
+		++Done;
+	}
+	if (PendingUploadIdx >= N)
+	{
+		if (Material) Mesh->SetMaterial(0, Material);
+		Mesh->SetCastShadow(bCastShadows);
+		DirtySubChunks.Reset();
+		PendingUploadIdx = -1;
+		bGenerating = false;
+	}
 }
 
 void AGenerateSurface::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (PendingUploadIdx >= 0)
+	{
+		StepUpload();
+		return;
+	}
 	if (bGenerating) return;
 	if (DirtySubChunks.Num() == 0) return;
 	RemeshAccumulator += DeltaTime;
@@ -845,6 +865,7 @@ void AGenerateSurface::MarkVoxelDirty(int32 x, int32 y, int32 z)
 void AGenerateSurface::Setup()
 {
 	SizeZ = Size + UndergroundDepth;
+	kVoxelScale = kBaseVoxel * (float)NodeScale;
 	const int Dim = Size + 1;
 	Voxels.SetNumUninitialized(Dim * Dim * (SizeZ + 1));
 	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
@@ -869,6 +890,7 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 	const float MaxAllowed = (float)SizeZ - 1.0f;
 	const float PX = Position.X;
 	const float PY = Position.Y;
+	const float OzVox = (SurfaceRefZ - Position.Z * kBaseVoxel) / kVoxelScale;
 	BiomeOriginYVoxel = PY;
 	const int32 HPos = HumidityPos;
 	const int32 TPos = TemperaturePos;
@@ -879,11 +901,13 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 
 	ParallelFor(Dim, [&](int32 x)
 	{
+		const float sx = (float)(x * NodeScale);
 		for (int y = 0; y < Dim; ++y)
 		{
-			float noiseHeight = LocalNoise->GetNoise(PX + (float)x, PY + (float)y);
-			HumidityNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + HPos + (float)x, PY + HPos + (float)y);
-			TemperatureNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + TPos + (float)x, PY + TPos + (float)y);
+			const float sy = (float)(y * NodeScale);
+			float noiseHeight = LocalNoise->GetNoise(PX + sx, PY + sy);
+			HumidityNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + HPos + sx, PY + HPos + sy);
+			TemperatureNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + TPos + sx, PY + TPos + sy);
 
 			float h01 = FMath::Clamp((noiseHeight + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f);
 			h01 = FMath::Pow(h01, HeightRedistribution);
@@ -891,7 +915,7 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 
 			if (bEnableOceans)
 			{
-				const float cont01 = (LocalContinentNoise->GetNoise(PX + (float)x, PY + (float)y) + 1.0f) * 0.5f;
+				const float cont01 = (LocalContinentNoise->GetNoise(PX + sx, PY + sy) + 1.0f) * 0.5f;
 				const float landT = FMath::Clamp((cont01 - OceanThreshold) / FMath::Max(0.0001f, CoastWidth), 0.0f, 1.0f);
 				const float landFactor = landT * landT * (3.0f - 2.0f * landT);
 				terrainHeight = FMath::Lerp(OceanFloorVoxel, terrainHeight, landFactor);
@@ -899,7 +923,7 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 
 			if (bEnableRivers && terrainHeight < RiverMaxTerrain)
 			{
-				const float rv = LocalRiverNoise->GetNoise(PX + (float)x, PY + (float)y);
+				const float rv = LocalRiverNoise->GetNoise(PX + sx, PY + sy);
 				const float rEdge = FMath::Clamp(FMath::Abs(rv) / FMath::Max(0.0001f, RiverWidth), 0.0f, 1.0f);
 				const float riverMask = 1.0f - (rEdge * rEdge * (3.0f - 2.0f * rEdge));
 				if (riverMask > 0.0f)
@@ -909,14 +933,18 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 			}
 
 			terrainHeight += (float)UndergroundDepth;
-			if (terrainHeight < 0.2f) terrainHeight = 0.2f;
-			if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
+			if (!bCubicNode)
+			{
+				if (terrainHeight < 0.2f) terrainHeight = 0.2f;
+				if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
+			}
 
-			SurfaceHeightVoxel[x + y * Dim] = terrainHeight;
+			const float thNode = terrainHeight / (float)NodeScale + OzVox;
+			SurfaceHeightVoxel[x + y * Dim] = thNode;
 
 			for (int z = 0; z < DimZ; ++z)
 			{
-				Voxels[GetVoxelIndex(x, y, z)] = (float)z - terrainHeight;
+				Voxels[GetVoxelIndex(x, y, z)] = (float)z - thNode;
 			}
 		}
 	});
@@ -1072,7 +1100,9 @@ FVector2D AGenerateSurface::GetUV(FVector Position, FVector Normal) const
 
 FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 {
-	const float VoxelHeight = Position.Z / kVoxelScale - (float)UndergroundDepth;
+	const float VoxelHeight = bCubicNode
+		? (NodeOriginZ + Position.Z - SurfaceRefZ) / kBaseVoxel
+		: (Position.Z / kVoxelScale * (float)NodeScale - (float)UndergroundDepth);
 
 	const int32 Dim = Size + 1;
 	const int32 vx = FMath::Clamp(FMath::RoundToInt(Position.X / kVoxelScale), 0, Size);
@@ -1089,7 +1119,7 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 	const float NormalizedAltitude = FMath::Clamp((VoxelHeight - SeaLevel) / Denom, 0.0f, 1.0f);
 
 	const float LatitudePeriod = 2000.0f;
-	const float WorldVoxelY = BiomeOriginYVoxel + Position.Y / kVoxelScale;
+	const float WorldVoxelY = BiomeOriginYVoxel + Position.Y / kVoxelScale * (float)NodeScale;
 	const float LatitudeClimate = 0.5f + 0.5f * FMath::Sin(WorldVoxelY * (2.0f * PI / LatitudePeriod));
 
 	float Temperature = NoiseTemp * 0.8f + LatitudeClimate * 0.2f;
@@ -1126,7 +1156,7 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 	{
 		return FColor(32, 96, 160);
 	}
-	if (VoxelHeight <= SeaLevel + 2.0f)
+	if (VoxelHeight <= SeaLevel + BeachWidthVoxels)
 	{
 		return FColor(214, 203, 156);
 	}
@@ -1275,9 +1305,17 @@ void AGenerateSurface::CarveSphereImpl(const FVector& ChunkOrigin, const FVector
 void AGenerateSurface::SetChunkCollisionEnabled(bool bEnable)
 {
 	if (bCollisionEnabled == bEnable) return;
-	if (bGenerating) return;
+	if (bGenerating || PendingUploadIdx >= 0) return;
 	bCollisionEnabled = bEnable;
-	KickAsyncBuild(false);
+	if (CachedBuilds.Num() == SubChunks.Num() && SubChunks.Num() > 0)
+	{
+		bGenerating = true;
+		PendingUploadIdx = 0;
+	}
+	else
+	{
+		KickAsyncBuild(false);
+	}
 }
 
 void AGenerateSurface::SetLODLevel(int32 NewLOD)

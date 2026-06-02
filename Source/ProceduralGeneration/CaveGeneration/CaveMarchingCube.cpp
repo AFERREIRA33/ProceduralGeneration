@@ -230,13 +230,13 @@ int32 ACaveMarchingCube::GetTileSeed(const FIntPoint& Tile) const
 	return (int32)h;
 }
 
-TArray<FCaveCarveOp> ACaveMarchingCube::GetTileOps(const FBox& ChunkAABB)
+TArray<FCaveCarveOp> ACaveMarchingCube::GetTileOps(const FBox& ChunkAABB, float FloorOverrideZ, float BandTopVoxelsOverride)
 {
 	const FVector AABBSize = ChunkAABB.GetSize();
 	const float TileWorld = (AABBSize.X > 1.f) ? AABBSize.X : (WormGlobalSize * voxelSize);
 	const float TileVoxWidth = TileWorld / voxelSize;
 	const FIntPoint Tile(FMath::RoundToInt(ChunkAABB.Min.X / TileWorld), FMath::RoundToInt(ChunkAABB.Min.Y / TileWorld));
-	const float FloorWorldZ = ChunkAABB.Min.Z;
+	const float FloorWorldZ = (FloorOverrideZ < 3.0e38f) ? FloorOverrideZ : ChunkAABB.Min.Z;
 
 	TArray<FCaveCarveOp> Result;
 	for (int32 dy = -1; dy <= 1; ++dy)
@@ -247,7 +247,7 @@ TArray<FCaveCarveOp> ACaveMarchingCube::GetTileOps(const FBox& ChunkAABB)
 		if (!Ops)
 		{
 			TArray<FCaveCarveOp> Built;
-			BuildTileCarveOps(NT, FloorWorldZ, TileVoxWidth, Built);
+			BuildTileCarveOps(NT, FloorWorldZ, TileVoxWidth, Built, BandTopVoxelsOverride);
 			Ops = &CavePlansByTile.Add(NT, MoveTemp(Built));
 		}
 
@@ -265,7 +265,7 @@ TArray<FCaveCarveOp> ACaveMarchingCube::GetTileOps(const FBox& ChunkAABB)
 	return Result;
 }
 
-void ACaveMarchingCube::BuildTileCarveOps(const FIntPoint& Tile, float FloorWorldZ, float TileVoxWidth, TArray<FCaveCarveOp>& Out)
+void ACaveMarchingCube::BuildTileCarveOps(const FIntPoint& Tile, float FloorWorldZ, float TileVoxWidth, TArray<FCaveCarveOp>& Out, float BandTopOverride)
 {
 	Out.Reset();
 	noise->SetFrequency(wormNoiseFrequency);
@@ -276,11 +276,16 @@ void ACaveMarchingCube::BuildTileCarveOps(const FIntPoint& Tile, float FloorWorl
 	const float OriginVY = (float)Tile.Y * TileVoxWidth;
 	const float Margin = TileVoxWidth * 0.18f;
 	const float MinZ = FMath::Max(2.f, CaveMinZVoxel);
-	const float MaxZ = FMath::Max(MinZ + 6.f, CaveMaxZVoxel);
+	const float MaxZ = (BandTopOverride > 0.f) ? FMath::Max(MinZ + 6.f, BandTopOverride) : FMath::Max(MinZ + 6.f, CaveMaxZVoxel);
 	const float EntranceCeil = FMath::Max(MaxZ + 2.f, EntranceCeilVoxel);
 	const float ReachLimit = FMath::Max(16.f, MaxWormReachVoxels);
 
-	const int32 NumSeeds = FMath::Max(1, NumSeedWorms);
+	int32 NumSeeds = FMath::Max(1, NumSeedWorms);
+	if (BandTopOverride > 0.f)
+	{
+		const float BandFill = (MaxZ - MinZ) / 51.0f;
+		NumSeeds = FMath::Clamp(FMath::RoundToInt((float)NumSeeds * BandFill), NumSeeds, 24);
+	}
 	TArray<FWorm> Worms;
 	Worms.Reserve(NumSeeds * 3);
 

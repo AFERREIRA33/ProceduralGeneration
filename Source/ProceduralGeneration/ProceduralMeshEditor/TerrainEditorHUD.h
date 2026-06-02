@@ -71,6 +71,18 @@ public:
 	UPROPERTY(EditAnywhere, Category="HUD|Brush")
 	float BrushPanelWidth = 320.f;
 
+	UPROPERTY(EditAnywhere, Category="HUD|Brush")
+	bool bShowEditPrompt = true;
+
+	UPROPERTY(EditAnywhere, Category="HUD|Brush")
+	FString EditPrompt = TEXT("Press TAB to Edit Terrain");
+
+	UPROPERTY(EditAnywhere, Category="HUD|Brush")
+	float EditPromptPanelWidth = 280.f;
+
+	UPROPERTY(EditAnywhere, Category="HUD|Brush")
+	FLinearColor EditPromptColor = FLinearColor(1.f, 0.85f, 0.15f);
+
 	UPROPERTY(EditAnywhere, Category="HUD|Brush|KeyHints")
 	bool bShowKeyHints = true;
 

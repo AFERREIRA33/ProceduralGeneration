@@ -10,6 +10,21 @@
 class AGenerateSurface;
 class ACaveMarchingCube;
 
+struct FOctreeNodeKey
+{
+	int32 X = 0;
+	int32 Y = 0;
+	int32 Z = 0;
+	int32 S = 0;
+	bool operator==(const FOctreeNodeKey& O) const { return X == O.X && Y == O.Y && Z == O.Z && S == O.S; }
+	friend FArchive& operator<<(FArchive& Ar, FOctreeNodeKey& K) { return Ar << K.X << K.Y << K.Z << K.S; }
+};
+
+FORCEINLINE uint32 GetTypeHash(const FOctreeNodeKey& K)
+{
+	return HashCombine(HashCombine(::GetTypeHash(K.X), ::GetTypeHash(K.Y)), HashCombine(::GetTypeHash(K.Z), ::GetTypeHash(K.S)));
+}
+
 UCLASS()
 class PROCEDURALGENERATION_API AWorldGenerator : public AActor
 {
@@ -64,6 +79,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome")
 	float SnowLevel = 88.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0"))
+	float BeachWidthVoxels = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Biome", meta=(ClampMin="0.0", ClampMax="1.0"))
 	float BiomeHeightCooling = 0.25f;
@@ -145,6 +163,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
 	bool bUseOctreeLOD = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD")
+	bool bUseOctreeStreaming = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.5"))
+	float OctreeSubdivFactor = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.25"))
+	float OctreeRockDepthScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0.5"))
+	float OctreeCollisionRadiusChunks = 1.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LOD", meta=(ClampMin="0", ClampMax="5"))
 	int DebugForceLOD = 0;
 
@@ -196,7 +226,19 @@ private:
 	AGenerateSurface* SpawnChunkAt(int ChunkX, int ChunkY, bool bWantCollision);
 	int32 ComputeChunkLOD(int ChunkX, int ChunkY) const;
 
+	void ConfigureChunkCommon(AGenerateSurface* chunk, bool bWantCollision);
+	void UpdateStreamingOctree();
+	void CollectOctreeLeaves(const FVector& PlayerLoc, TArray<FOctreeNodeKey>& Out);
+	bool IsReplacementReady(const FOctreeNodeKey& Key, const TSet<FOctreeNodeKey>& DesiredSet);
+	void SubdivideOctree(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc, TArray<FOctreeNodeKey>& Out);
+	bool NodeIntersectsSurface(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale);
+	float SampleSurfaceWorldZ(float WorldX, float WorldY);
+	int32 NaturalScale(const FVector& Point, const FVector& PlayerLoc);
+	int32 ComputeNodeTransitionMask(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc);
+	AGenerateSurface* SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, bool bWantCollision);
+
 	void CaptureChunkEdits(const FIntPoint& Key, AGenerateSurface* Chunk);
+	void CaptureChunkEdits(const FOctreeNodeKey& Key, AGenerateSurface* Chunk);
 	void LoadEdits();
 	void SaveEdits();
 	FString EditSavePath() const;
@@ -204,7 +246,11 @@ private:
 	UPROPERTY()
 	TMap<FIntPoint, TObjectPtr<AGenerateSurface>> LoadedChunks;
 
+	TMap<FOctreeNodeKey, TObjectPtr<AGenerateSurface>> OctreeChunks;
+	FastNoiseLite StreamHeightNoise;
+
 	TMap<FIntPoint, TMap<int32, float>> EditStore;
+	TMap<FOctreeNodeKey, TMap<int32, float>> OctreeEditStore;
 
 	UPROPERTY()
 	TObjectPtr<ACaveMarchingCube> CaveActor;
