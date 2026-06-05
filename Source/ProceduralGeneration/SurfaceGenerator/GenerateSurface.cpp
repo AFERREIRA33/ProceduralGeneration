@@ -1485,10 +1485,10 @@ void AGenerateSurface::ApplyBrush(const FVector& WorldCenter, float Radius, floa
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(0, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(SizeZ - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(SizeZ, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)
@@ -1523,10 +1523,10 @@ void AGenerateSurface::ApplyFlatten(const FVector& WorldCenter, float Radius, fl
 
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt(LocalCenter.X - LocalRadius));
 	const int32 MinY = FMath::Max(0, FMath::FloorToInt(LocalCenter.Y - LocalRadius));
-	const int32 MinZ = FMath::Max(1, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
+	const int32 MinZ = FMath::Max(0, FMath::FloorToInt(LocalCenter.Z - LocalRadius));
 	const int32 MaxX = FMath::Min(Size, FMath::CeilToInt(LocalCenter.X + LocalRadius));
 	const int32 MaxY = FMath::Min(Size, FMath::CeilToInt(LocalCenter.Y + LocalRadius));
-	const int32 MaxZ = FMath::Min(SizeZ - 1, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
+	const int32 MaxZ = FMath::Min(SizeZ, FMath::CeilToInt(LocalCenter.Z + LocalRadius));
 
 	for (int32 z = MinZ; z <= MaxZ; ++z)
 	for (int32 y = MinY; y <= MaxY; ++y)

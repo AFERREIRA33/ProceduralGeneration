@@ -32,8 +32,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Values", meta=(ClampMin="0.05", ClampMax="0.5"))
 	float MaxStrengthPerStep = 0.15f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Limits", meta=(ClampMin="0", ClampMax="750", UIMin="0", UIMax="750"))
-	float BrushRadiusMin = 50.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Limits", meta=(ClampMin="100", ClampMax="750", UIMin="100", UIMax="750"))
+	float BrushRadiusMin = 150.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Limits", meta=(ClampMin="0", ClampMax="750", UIMin="0", UIMax="750"))
 	float BrushRadiusMax = 750.f;
