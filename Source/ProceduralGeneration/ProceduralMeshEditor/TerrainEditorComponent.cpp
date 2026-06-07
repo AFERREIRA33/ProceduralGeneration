@@ -145,9 +145,11 @@ bool UTerrainEditorComponent::TraceFromCamera(FHitResult& OutHit, AGenerateSurfa
 
 	float BestDist = MaxTraceDistance;
 	bool bHitAny = false;
+	int32 Probes = 0;
 	for (const TPair<float, AGenerateSurface*>& C : Candidates)
 	{
 		if (C.Key >= BestDist) break;
+		if (++Probes > MaxTraceProbes) break;
 		FVector HitPos, Normal;
 		if (C.Value->TraceDensityField(Start, Dir, MaxTraceDistance, HitPos, Normal))
 		{

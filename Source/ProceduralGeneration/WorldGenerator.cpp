@@ -218,7 +218,7 @@ AGenerateSurface* AWorldGenerator::SpawnChunkAt(int ChunkX, int ChunkY, bool bWa
 	return chunk;
 }
 
-AGenerateSurface* AWorldGenerator::SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, bool bWantCollision)
+AGenerateSurface* AWorldGenerator::SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, int32 FinerMask, bool bWantCollision)
 {
 	const FOctreeNodeKey Key{ CellX, CellY, CellZ, NodeScale };
 	if (OctreeChunks.Contains(Key))
@@ -236,12 +236,13 @@ AGenerateSurface* AWorldGenerator::SpawnNodeChunk(int32 CellX, int32 CellY, int3
 	ConfigureChunkCommon(chunk, bWantCollision);
 	chunk->LODLevel = 0;
 	chunk->NodeScale = NodeScale;
-	chunk->kVoxelScale = 100.0f * (float)NodeScale;
+	chunk->VoxelSize = 100.0f * (float)NodeScale;
 	chunk->bCubicNode = true;
 	chunk->UndergroundDepth = 0;
 	chunk->NodeOriginZ = (float)CellZ * BaseChunk;
-	chunk->bUseTransvoxelMesher = false;
+	chunk->bUseTransvoxelMesher = true;
 	chunk->TransitionFaceMask = TransMask;
+	chunk->FinerNeighbourMask = FinerMask;
 
 	if (bEnableCaves && CaveActor && NodeScale == 1)
 	{
@@ -328,6 +329,22 @@ int32 AWorldGenerator::ComputeNodeTransitionMask(int32 CellX, int32 CellY, int32
 	if (NaturalScale(FVector(cx - Off, cy, cz), PlayerLoc) > NodeScale) Mask |= 2;
 	if (NaturalScale(FVector(cx, cy + Off, cz), PlayerLoc) > NodeScale) Mask |= 4;
 	if (NaturalScale(FVector(cx, cy - Off, cz), PlayerLoc) > NodeScale) Mask |= 8;
+	return Mask;
+}
+
+int32 AWorldGenerator::ComputeNodeFinerMask(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc)
+{
+	const float BaseChunk = Size * 100.0f;
+	const float NodeWorld = (float)NodeScale * BaseChunk;
+	const float cx = ((float)CellX + (float)NodeScale * 0.5f) * BaseChunk;
+	const float cy = ((float)CellY + (float)NodeScale * 0.5f) * BaseChunk;
+	const float cz = ((float)CellZ + (float)NodeScale * 0.5f) * BaseChunk;
+	const float Off = NodeWorld * 0.75f;
+	int32 Mask = 0;
+	if (NaturalScale(FVector(cx + Off, cy, cz), PlayerLoc) < NodeScale) Mask |= 1;
+	if (NaturalScale(FVector(cx - Off, cy, cz), PlayerLoc) < NodeScale) Mask |= 2;
+	if (NaturalScale(FVector(cx, cy + Off, cz), PlayerLoc) < NodeScale) Mask |= 4;
+	if (NaturalScale(FVector(cx, cy - Off, cz), PlayerLoc) < NodeScale) Mask |= 8;
 	return Mask;
 }
 
@@ -439,67 +456,80 @@ void AWorldGenerator::UpdateStreamingOctree()
 	}
 	const FVector PlayerLocation = PlayerPawn->GetActorLocation();
 
-	TArray<FOctreeNodeKey> Desired;
-	CollectOctreeLeaves(PlayerLocation, Desired);
-	TSet<FOctreeNodeKey> DesiredSet(Desired);
-
-	TArray<FOctreeNodeKey> ToUnload;
-	for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+	bool bRecomputed = false;
+	if (CachedDesired.Num() == 0 || ++StreamRecomputeCounter >= FMath::Max(1, StreamRecomputeEveryNFrames))
 	{
-		if (!DesiredSet.Contains(Pair.Key))
-		{
-			if (Pair.Value && Pair.Value->IsGenerating()) continue;
-			if (!IsReplacementReady(Pair.Key, DesiredSet)) continue;
-			ToUnload.Add(Pair.Key);
-		}
+		StreamRecomputeCounter = 0;
+		CollectOctreeLeaves(PlayerLocation, CachedDesired);
+		bRecomputed = true;
 	}
-	for (const FOctreeNodeKey& Key : ToUnload)
-	{
-		if (AGenerateSurface* Chunk = OctreeChunks.FindRef(Key))
-		{
-			if (bPersistEdits) CaptureChunkEdits(Key, Chunk);
-			Chunk->Destroy();
-		}
-		OctreeChunks.Remove(Key);
-	}
-
+	TArray<FOctreeNodeKey>& Desired = CachedDesired;
 	const float BaseChunk = Size * 100.0f;
-	TArray<FOctreeNodeKey> Missing;
-	TArray<float> MissingDist;
-	for (const FOctreeNodeKey& Key : Desired)
+
+	if (bRecomputed)
 	{
-		if (OctreeChunks.Contains(Key)) continue;
-		const float cx = ((float)Key.X + (float)Key.S * 0.5f) * BaseChunk;
-		const float cy = ((float)Key.Y + (float)Key.S * 0.5f) * BaseChunk;
-		const float cz = ((float)Key.Z + (float)Key.S * 0.5f) * BaseChunk;
-		const float dx = PlayerLocation.X - cx;
-		const float dy = PlayerLocation.Y - cy;
-		const float dz = PlayerLocation.Z - cz;
-		Missing.Add(Key);
-		MissingDist.Add(dx * dx + dy * dy + dz * dz);
+		TSet<FOctreeNodeKey> DesiredSet(Desired);
+
+		TArray<FOctreeNodeKey> ToUnload;
+		for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+		{
+			if (!DesiredSet.Contains(Pair.Key))
+			{
+				if (Pair.Value && Pair.Value->IsGenerating()) continue;
+				if (!IsReplacementReady(Pair.Key, DesiredSet)) continue;
+				ToUnload.Add(Pair.Key);
+			}
+		}
+		for (const FOctreeNodeKey& Key : ToUnload)
+		{
+			if (AGenerateSurface* Chunk = OctreeChunks.FindRef(Key))
+			{
+				if (bPersistEdits) CaptureChunkEdits(Key, Chunk);
+				Chunk->Destroy();
+			}
+			OctreeChunks.Remove(Key);
+		}
+
+		CachedMissing.Reset();
+		CachedMissingDist.Reset();
+		for (const FOctreeNodeKey& Key : Desired)
+		{
+			if (OctreeChunks.Contains(Key)) continue;
+			const float cx = ((float)Key.X + (float)Key.S * 0.5f) * BaseChunk;
+			const float cy = ((float)Key.Y + (float)Key.S * 0.5f) * BaseChunk;
+			const float cz = ((float)Key.Z + (float)Key.S * 0.5f) * BaseChunk;
+			const float dx = PlayerLocation.X - cx;
+			const float dy = PlayerLocation.Y - cy;
+			const float dz = PlayerLocation.Z - cz;
+			CachedMissing.Add(Key);
+			CachedMissingDist.Add(dx * dx + dy * dy + dz * dz);
+		}
 	}
 
-	const int Budget = FMath::Max(1, MaxChunksPerFrame);
+	const int Budget = bInitialFillDone ? FMath::Max(1, MaxChunksPerFrame) : FMath::Max(1, InitialFillChunksPerFrame);
 	int Spawned = 0;
-	while (Spawned < Budget && Missing.Num() > 0)
+	while (Spawned < Budget && CachedMissing.Num() > 0)
 	{
 		int BestIdx = 0;
-		for (int i = 1; i < Missing.Num(); ++i)
+		for (int i = 1; i < CachedMissing.Num(); ++i)
 		{
-			if (MissingDist[i] < MissingDist[BestIdx]) BestIdx = i;
+			if (CachedMissingDist[i] < CachedMissingDist[BestIdx]) BestIdx = i;
 		}
-		const FOctreeNodeKey Key = Missing[BestIdx];
+		const FOctreeNodeKey Key = CachedMissing[BestIdx];
 		const int32 TransMask = ComputeNodeTransitionMask(Key.X, Key.Y, Key.Z, Key.S, PlayerLocation);
+		const int32 FinerMask = ComputeNodeFinerMask(Key.X, Key.Y, Key.Z, Key.S, PlayerLocation);
 		const float ncx = ((float)Key.X + 0.5f) * BaseChunk;
 		const float ncy = ((float)Key.Y + 0.5f) * BaseChunk;
 		const float ncz = ((float)Key.Z + 0.5f) * BaseChunk;
 		const float CollR = OctreeCollisionRadiusChunks * BaseChunk;
 		const bool bWantCollision = bChunkCollision && (Key.S == 1) && FVector::DistSquared(FVector(ncx, ncy, ncz), PlayerLocation) < CollR * CollR;
-		SpawnNodeChunk(Key.X, Key.Y, Key.Z, Key.S, TransMask, bWantCollision);
-		Missing.RemoveAtSwap(BestIdx);
-		MissingDist.RemoveAtSwap(BestIdx);
+		SpawnNodeChunk(Key.X, Key.Y, Key.Z, Key.S, TransMask, FinerMask, bWantCollision);
+		CachedMissing.RemoveAtSwap(BestIdx);
+		CachedMissingDist.RemoveAtSwap(BestIdx);
 		++Spawned;
 	}
+
+	if (!bInitialFillDone && CachedMissing.Num() == 0) bInitialFillDone = true;
 
 	if (bChunkCollision)
 	{

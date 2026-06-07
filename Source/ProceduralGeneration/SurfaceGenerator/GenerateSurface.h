@@ -6,6 +6,7 @@
 #include  "ProceduralMeshComponent.h"
 #include "ProceduralGeneration/Chunk/ChunkBase.h"
 #include "ProceduralGeneration/CaveGeneration/CaveCarveOp.h"
+#include "Async/Future.h"
 #include "GenerateSurface.generated.h"
 
 UCLASS()
@@ -27,7 +28,7 @@ public:
 	int UndergroundDepth = 32;
 	int SizeZ = 96;
 	int NodeScale = 1;
-	float kVoxelScale = 100.f;
+	float VoxelSize = 100.f;
 	bool bCubicNode = false;
 	float SurfaceRefZ = 0.f;
 	float NodeOriginZ = 0.f;
@@ -201,6 +202,13 @@ private:
 	int32 PendingUploadIdx = -1;
 	int32 UploadSubChunksPerFrame = 4;
 
+	TArray<float> SnapshotVoxels;
+	mutable const TArray<float>* VoxelSrc = nullptr;
+	TArray<int32> FlushIndices;
+	TArray<FSubChunkBuildData> FlushBuilds;
+	int32 FlushUploadIdx = -1;
+	TFuture<void> FlushFuture;
+
 	void KickAsyncBuild(bool bGenVoxels);
 	void BuildChunkDataAsync(bool bGenVoxels);
 	void FinishGenerationGameThread();
@@ -210,6 +218,8 @@ private:
 	void CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty);
 
 	void BuildSubChunks();
+	float ComputeTerrainHeightBase(float ArgX, float ArgY) const;
+	float SampleThNodeLocal(float LocalVoxX, float LocalVoxY) const;
 	void RebuildAllSubChunks();
 	void BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) const;
 	void BuildSubChunkDataTransvoxel(int32 Idx, FSubChunkBuildData& Out) const;
@@ -217,13 +227,16 @@ private:
 	FVector ComputeTransitionInset(const FVector& P, const FVector& N) const;
 	int32 AddOrReuseVertex(FSubChunkBuildData& Out, TMap<FIntVector, int32>& Dedup, const FVector& Pos, const FVector& Norm) const;
 	void UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data);
-	void FlushDirtySubChunks();
+	void KickAsyncFlush();
+	void StepFlushUpload();
 	void MarkVoxelDirty(int32 x, int32 y, int32 z);
+	const TArray<float>& BuildVox() const { return VoxelSrc ? *VoxelSrc : Voxels; }
 	FVector GradientAtCorner(int32 x, int32 y, int32 z) const;
 	float SampleDensityTrilinear(float lx, float ly, float lz) const;
 	float SampleTransitionCorner(int32 ox, int32 oy, int32 oz, int32 Step) const;
 
 	virtual ProceduralGenerationType SetGenerationType() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Setup() override;
 	virtual void Generate2DHeightMap(FVector Position) override;
 	virtual void Generate3DHeightMap(FVector Position) override {};

@@ -257,21 +257,46 @@ void AGenerateSurface::StepUpload()
 	}
 }
 
+void AGenerateSurface::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (FlushFuture.IsValid())
+	{
+		FlushFuture.Wait();
+		FlushFuture = TFuture<void>();
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
 void AGenerateSurface::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (FlushFuture.IsValid())
+	{
+		if (!FlushFuture.IsReady()) return;
+		FlushFuture = TFuture<void>();
+		FlushUploadIdx = 0;
+	}
+	if (FlushUploadIdx >= 0)
+	{
+		StepFlushUpload();
+		return;
+	}
 	if (PendingUploadIdx >= 0)
 	{
 		StepUpload();
 		return;
 	}
 	if (bGenerating) return;
-	if (DirtySubChunks.Num() == 0) return;
+	if (DirtySubChunks.Num() == 0)
+	{
+		SetActorTickEnabled(false);
+		return;
+	}
 	RemeshAccumulator += DeltaTime;
 	const float Interval = bInEditStroke ? RemeshIntervalDuringStroke : RemeshInterval;
 	if (RemeshAccumulator < Interval) return;
 	RemeshAccumulator = 0.f;
-	FlushDirtySubChunks();
+	KickAsyncFlush();
 }
 
 void AGenerateSurface::BuildSubChunks()
@@ -328,10 +353,11 @@ FVector AGenerateSurface::GradientAtCorner(int32 x, int32 y, int32 z) const
 	const int32 yp = FMath::Min(Size, y + 1);
 	const int32 zm = FMath::Max(0, z - 1);
 	const int32 zp = FMath::Min(SizeZ, z + 1);
+	const TArray<float>& VS = BuildVox();
 	return FVector(
-		Voxels[GetVoxelIndex(xp, y, z)] - Voxels[GetVoxelIndex(xm, y, z)],
-		Voxels[GetVoxelIndex(x, yp, z)] - Voxels[GetVoxelIndex(x, ym, z)],
-		Voxels[GetVoxelIndex(x, y, zp)] - Voxels[GetVoxelIndex(x, y, zm)]);
+		VS[GetVoxelIndex(xp, y, z)] - VS[GetVoxelIndex(xm, y, z)],
+		VS[GetVoxelIndex(x, yp, z)] - VS[GetVoxelIndex(x, ym, z)],
+		VS[GetVoxelIndex(x, y, zp)] - VS[GetVoxelIndex(x, y, zm)]);
 }
 
 float AGenerateSurface::SampleTransitionCorner(int32 ox, int32 oy, int32 oz, int32 Step) const
@@ -360,14 +386,14 @@ float AGenerateSurface::SampleTransitionCorner(int32 ox, int32 oy, int32 oz, int
 			{
 				Q[A] = av;
 				Q[B] = bv;
-				return Voxels[GetVoxelIndex(Q[0], Q[1], Q[2])];
+				return BuildVox()[GetVoxelIndex(Q[0], Q[1], Q[2])];
 			};
 			const float v0 = FMath::Lerp(S(a0, b0), S(a1, b0), fa);
 			const float v1 = FMath::Lerp(S(a0, b1), S(a1, b1), fa);
 			return FMath::Lerp(v0, v1, fb);
 		}
 	}
-	return Voxels[GetVoxelIndex(ox, oy, oz)];
+	return BuildVox()[GetVoxelIndex(ox, oy, oz)];
 }
 
 void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) const
@@ -420,7 +446,7 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			const int32 oy = FMath::Min(y + VertexOffset[c][1] * Step, Size);
 			const int32 oz = FMath::Min(z + VertexOffset[c][2] * Step, SizeZ);
 			CornerValues[c] = SampleTransitionCorner(ox, oy, oz, Step);
-			CornerPos[c] = FVector(ox, oy, oz) * kVoxelScale;
+			CornerPos[c] = FVector(ox, oy, oz) * VoxelSize;
 			if (CornerValues[c] < 0.f) CubeIndex |= (1 << c);
 		}
 
@@ -490,9 +516,15 @@ void AGenerateSurface::BuildSubChunkData(int32 Idx, FSubChunkBuildData& Out) con
 			const int t1 = TriangleConnectionTable[CubeIndex][i + 1];
 			const int t2 = TriangleConnectionTable[CubeIndex][i + 2];
 
-			Out.Triangles.Add(EdgeVertIndex[t0]);
-			Out.Triangles.Add(EdgeVertIndex[t1]);
-			Out.Triangles.Add(EdgeVertIndex[t2]);
+			const int32 vi0 = EdgeVertIndex[t0];
+			const int32 vi1 = EdgeVertIndex[t1];
+			const int32 vi2 = EdgeVertIndex[t2];
+			if (vi0 != vi1 && vi1 != vi2 && vi0 != vi2)
+			{
+				Out.Triangles.Add(vi0);
+				Out.Triangles.Add(vi1);
+				Out.Triangles.Add(vi2);
+			}
 		}
 	}
 }
@@ -516,11 +548,11 @@ FVector AGenerateSurface::ComputeTransitionInset(const FVector& P, const FVector
 	if (FinerNeighbourMask == 0) return FVector::ZeroVector;
 
 	const float Step = (float)FMath::Clamp(1 << LODLevel, 1, SubChunkSize);
-	const float Ext = (float)Size * kVoxelScale;
-	const float R = Step * kVoxelScale;
-	const float M = Step * kVoxelScale;
+	const float Ext = (float)Size * VoxelSize;
+	const float R = Step * VoxelSize;
+	const float M = Step * VoxelSize;
 
-	float W = TransitionWidthScale * (Step * 0.5f) * kVoxelScale;
+	float W = TransitionWidthScale * (Step * 0.5f) * VoxelSize;
 	W = FMath::Min(W, 0.85f * R);
 	if (W <= 0.f) return FVector::ZeroVector;
 
@@ -597,8 +629,8 @@ void AGenerateSurface::BuildSubChunkDataTransvoxel(int32 Idx, FSubChunkBuildData
 			const int32 ox = FMath::Min(x + LCorner[c][0] * Step, Size);
 			const int32 oy = FMath::Min(y + LCorner[c][1] * Step, Size);
 			const int32 oz = FMath::Min(z + LCorner[c][2] * Step, SizeZ);
-			CornerValues[c] = Voxels[GetVoxelIndex(ox, oy, oz)];
-			CornerPos[c] = FVector(ox, oy, oz) * kVoxelScale;
+			CornerValues[c] = BuildVox()[GetVoxelIndex(ox, oy, oz)];
+			CornerPos[c] = FVector(ox, oy, oz) * VoxelSize;
 			if (CornerValues[c] < 0.f) CaseCode |= (1 << c);
 		}
 
@@ -664,9 +696,11 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 {
 	using namespace Transvoxel;
 
-	const int32 Sc = FMath::Clamp(1 << LODLevel, 2, SubChunkSize);
+	const bool bOct = bCubicNode;
+	const int32 Sc = bOct ? 1 : FMath::Clamp(1 << LODLevel, 2, SubChunkSize);
 	const int32 Sf = Sc / 2;
-	if (Sf < 1) return;
+	if (!bOct && Sf < 1) return;
+	const float SfF = bOct ? 0.5f : (float)Sf;
 
 	FIntVector Fixed, Uvec, Vvec;
 	int32 FixedVal;
@@ -701,12 +735,26 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 		{
 			const int32 col = s % 3;
 			const int32 row = s / 3;
-			const int32 uu = FMath::Min(uo + col * Sf, UMaxClamp);
-			const int32 vv = FMath::Min(vo + row * Sf, VMaxClamp);
-			const FIntVector Vx = Fixed * FixedVal + Uvec * uu + Vvec * vv;
-			SampleVox[s] = Vx;
-			SampleVal[s] = Voxels[GetVoxelIndex(Vx.X, Vx.Y, Vx.Z)];
-			SamplePos[s] = FVector(Vx.X, Vx.Y, Vx.Z) * kVoxelScale;
+			if (bOct)
+			{
+				const float fu = (float)uo + (float)col * SfF;
+				const float fv = (float)vo + (float)row * SfF;
+				const float vx = (float)(Fixed.X * FixedVal) + (float)Uvec.X * fu + (float)Vvec.X * fv;
+				const float vy = (float)(Fixed.Y * FixedVal) + (float)Uvec.Y * fu + (float)Vvec.Y * fv;
+				const float vz = (float)(Fixed.Z * FixedVal) + (float)Uvec.Z * fu + (float)Vvec.Z * fv;
+				SampleVox[s] = FIntVector(FMath::RoundToInt(vx), FMath::RoundToInt(vy), FMath::RoundToInt(vz));
+				SampleVal[s] = vz - SampleThNodeLocal(vx, vy);
+				SamplePos[s] = FVector(vx, vy, vz) * VoxelSize;
+			}
+			else
+			{
+				const int32 uu = FMath::Min(uo + col * Sf, UMaxClamp);
+				const int32 vv = FMath::Min(vo + row * Sf, VMaxClamp);
+				const FIntVector Vx = Fixed * FixedVal + Uvec * uu + Vvec * vv;
+				SampleVox[s] = Vx;
+				SampleVal[s] = BuildVox()[GetVoxelIndex(Vx.X, Vx.Y, Vx.Z)];
+				SamplePos[s] = FVector(Vx.X, Vx.Y, Vx.Z) * VoxelSize;
+			}
 		}
 		for (int32 k = 0; k < 4; ++k)
 		{
@@ -802,42 +850,49 @@ void AGenerateSurface::UploadSubChunk(int32 Idx, const FSubChunkBuildData& Data)
 	}
 }
 
-void AGenerateSurface::FlushDirtySubChunks()
+void AGenerateSurface::KickAsyncFlush()
 {
 	const int32 N = DirtySubChunks.Num();
 	if (N == 0) return;
 
-	const double T0 = FPlatformTime::Seconds();
-
-	CachedIndices.Reset(N);
-	for (int32 Idx : DirtySubChunks) CachedIndices.Add(Idx);
+	FlushIndices.Reset(N);
+	for (int32 Idx : DirtySubChunks) FlushIndices.Add(Idx);
 	DirtySubChunks.Reset();
 
-	if (CachedBuilds.Num() < N) CachedBuilds.SetNum(N);
+	if (FlushBuilds.Num() < N) FlushBuilds.SetNum(N);
 
-	ParallelFor(N, [this](int32 i)
+	SnapshotVoxels = Voxels;
+
+	FlushFuture = Async(EAsyncExecution::ThreadPool, [this, N]()
 	{
-		BuildSubChunkData(CachedIndices[i], CachedBuilds[i]);
+		VoxelSrc = &SnapshotVoxels;
+		ParallelFor(N, [this](int32 i)
+		{
+			BuildSubChunkData(FlushIndices[i], FlushBuilds[i]);
+		});
+		VoxelSrc = nullptr;
 	});
+}
 
-	const double T1 = FPlatformTime::Seconds();
-
-	for (int32 i = 0; i < N; ++i)
+void AGenerateSurface::StepFlushUpload()
+{
+	const int32 N = FlushIndices.Num();
+	int32 Done = 0;
+	while (FlushUploadIdx < N && Done < FMath::Max(1, UploadSubChunksPerFrame))
 	{
-		UploadSubChunk(CachedIndices[i], CachedBuilds[i]);
+		UploadSubChunk(FlushIndices[FlushUploadIdx], FlushBuilds[FlushUploadIdx]);
+		++FlushUploadIdx;
+		++Done;
 	}
-
-	const double T2 = FPlatformTime::Seconds();
-	const double TotalMs = (T2 - T0) * 1000.0;
-	if (TotalMs > 3.0)
+	if (FlushUploadIdx >= N)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("[FLUSH] subchunks=%d build=%.2fms upload=%.2fms total=%.2fms"),
-			N, (T1 - T0) * 1000.0, (T2 - T1) * 1000.0, TotalMs);
+		FlushUploadIdx = -1;
 	}
 }
 
 void AGenerateSurface::MarkVoxelDirty(int32 x, int32 y, int32 z)
 {
+	SetActorTickEnabled(true);
 	const int32 cx = x / SubChunkSize;
 	const int32 cy = y / SubChunkSize;
 	const int32 cz = z / SubChunkSize;
@@ -865,12 +920,64 @@ void AGenerateSurface::MarkVoxelDirty(int32 x, int32 y, int32 z)
 void AGenerateSurface::Setup()
 {
 	SizeZ = Size + UndergroundDepth;
-	kVoxelScale = kBaseVoxel * (float)NodeScale;
+	VoxelSize = kBaseVoxel * (float)NodeScale;
 	const int Dim = Size + 1;
 	Voxels.SetNumUninitialized(Dim * Dim * (SizeZ + 1));
 	HumidityNoiseValues.SetNumUninitialized(Dim * Dim);
 	TemperatureNoiseValues.SetNumUninitialized(Dim * Dim);
 }
+
+float AGenerateSurface::ComputeTerrainHeightBase(float ArgX, float ArgY) const
+{
+	FastNoiseLite* HN = Noise.Get();
+	FastNoiseLite* CN = ContinentNoise.IsValid() ? ContinentNoise.Get() : HN;
+	FastNoiseLite* RN = RiverNoise.IsValid() ? RiverNoise.Get() : HN;
+
+	float noiseHeight = HN->GetNoise(ArgX, ArgY);
+	float h01 = FMath::Clamp((noiseHeight + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f);
+	h01 = FMath::Pow(h01, HeightRedistribution);
+	float terrainHeight = h01 * (float)Size * HeightScale * MountainBoost + HeightOffset;
+
+	if (bEnableOceans)
+	{
+		const float cont01 = (CN->GetNoise(ArgX, ArgY) + 1.0f) * 0.5f;
+		const float landT = FMath::Clamp((cont01 - OceanThreshold) / FMath::Max(0.0001f, CoastWidth), 0.0f, 1.0f);
+		const float landFactor = landT * landT * (3.0f - 2.0f * landT);
+		terrainHeight = FMath::Lerp(OceanFloorVoxel, terrainHeight, landFactor);
+	}
+
+	if (bEnableRivers && terrainHeight < RiverMaxTerrain)
+	{
+		const float rv = RN->GetNoise(ArgX, ArgY);
+		const float rEdge = FMath::Clamp(FMath::Abs(rv) / FMath::Max(0.0001f, RiverWidth), 0.0f, 1.0f);
+		const float riverMask = 1.0f - (rEdge * rEdge * (3.0f - 2.0f * rEdge));
+		if (riverMask > 0.0f)
+		{
+			terrainHeight = FMath::Lerp(terrainHeight, RiverBedVoxel, riverMask * RiverStrength);
+		}
+	}
+
+	terrainHeight += (float)UndergroundDepth;
+	if (!bCubicNode)
+	{
+		if (terrainHeight < 0.2f) terrainHeight = 0.2f;
+		const float MaxAllowed = (float)SizeZ - 1.0f;
+		if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
+	}
+	return terrainHeight;
+}
+
+float AGenerateSurface::SampleThNodeLocal(float LocalVoxX, float LocalVoxY) const
+{
+	const float PX = GenChunkOrigin.X / kBaseVoxel;
+	const float PY = GenChunkOrigin.Y / kBaseVoxel;
+	const float sx = LocalVoxX * (float)NodeScale;
+	const float sy = LocalVoxY * (float)NodeScale;
+	const float terrainHeight = ComputeTerrainHeightBase(PX + sx, PY + sy);
+	const float OzVox = (SurfaceRefZ - GenChunkOrigin.Z) / VoxelSize;
+	return terrainHeight / (float)NodeScale + OzVox;
+}
+
 void AGenerateSurface::Generate2DHeightMap(FVector Position)
 {
 	UE_LOG(LogTemp, Verbose, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
@@ -887,17 +994,14 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 		UE_LOG(LogTemp, Verbose, TEXT("[HEIGHTMAP] terrain may clip top of chunk: maxHeight=%.1f, Size=%d. Lower MountainBoost or HeightScale."), MaxTerrainHeight, Size);
 	}
 
-	const float MaxAllowed = (float)SizeZ - 1.0f;
 	const float PX = Position.X;
 	const float PY = Position.Y;
-	const float OzVox = (SurfaceRefZ - Position.Z * kBaseVoxel) / kVoxelScale;
+	const float OzVox = (SurfaceRefZ - Position.Z * kBaseVoxel) / VoxelSize;
 	BiomeOriginYVoxel = PY;
 	const int32 HPos = HumidityPos;
 	const int32 TPos = TemperaturePos;
 	FastNoiseLite* LocalNoise = Noise.Get();
 	FastNoiseLite* LocalBiomeNoise = BiomeNoise.IsValid() ? BiomeNoise.Get() : LocalNoise;
-	FastNoiseLite* LocalContinentNoise = ContinentNoise.IsValid() ? ContinentNoise.Get() : LocalNoise;
-	FastNoiseLite* LocalRiverNoise = RiverNoise.IsValid() ? RiverNoise.Get() : LocalNoise;
 
 	ParallelFor(Dim, [&](int32 x)
 	{
@@ -905,39 +1009,10 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 		for (int y = 0; y < Dim; ++y)
 		{
 			const float sy = (float)(y * NodeScale);
-			float noiseHeight = LocalNoise->GetNoise(PX + sx, PY + sy);
 			HumidityNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + HPos + sx, PY + HPos + sy);
 			TemperatureNoiseValues[x + y * Dim] = LocalBiomeNoise->GetNoise(PX + TPos + sx, PY + TPos + sy);
 
-			float h01 = FMath::Clamp((noiseHeight + 1.0f) * 0.5f + MountainBias, 0.0f, 1.0f);
-			h01 = FMath::Pow(h01, HeightRedistribution);
-			float terrainHeight = h01 * (float)Size * HeightScale * MountainBoost + HeightOffset;
-
-			if (bEnableOceans)
-			{
-				const float cont01 = (LocalContinentNoise->GetNoise(PX + sx, PY + sy) + 1.0f) * 0.5f;
-				const float landT = FMath::Clamp((cont01 - OceanThreshold) / FMath::Max(0.0001f, CoastWidth), 0.0f, 1.0f);
-				const float landFactor = landT * landT * (3.0f - 2.0f * landT);
-				terrainHeight = FMath::Lerp(OceanFloorVoxel, terrainHeight, landFactor);
-			}
-
-			if (bEnableRivers && terrainHeight < RiverMaxTerrain)
-			{
-				const float rv = LocalRiverNoise->GetNoise(PX + sx, PY + sy);
-				const float rEdge = FMath::Clamp(FMath::Abs(rv) / FMath::Max(0.0001f, RiverWidth), 0.0f, 1.0f);
-				const float riverMask = 1.0f - (rEdge * rEdge * (3.0f - 2.0f * rEdge));
-				if (riverMask > 0.0f)
-				{
-					terrainHeight = FMath::Lerp(terrainHeight, RiverBedVoxel, riverMask * RiverStrength);
-				}
-			}
-
-			terrainHeight += (float)UndergroundDepth;
-			if (!bCubicNode)
-			{
-				if (terrainHeight < 0.2f) terrainHeight = 0.2f;
-				if (terrainHeight > MaxAllowed) terrainHeight = MaxAllowed;
-			}
+			const float terrainHeight = ComputeTerrainHeightBase(PX + sx, PY + sy);
 
 			const float thNode = terrainHeight / (float)NodeScale + OzVox;
 			SurfaceHeightVoxel[x + y * Dim] = thNode;
@@ -1102,11 +1177,11 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 {
 	const float VoxelHeight = bCubicNode
 		? (NodeOriginZ + Position.Z - SurfaceRefZ) / kBaseVoxel
-		: (Position.Z / kVoxelScale * (float)NodeScale - (float)UndergroundDepth);
+		: (Position.Z / VoxelSize * (float)NodeScale - (float)UndergroundDepth);
 
 	const int32 Dim = Size + 1;
-	const int32 vx = FMath::Clamp(FMath::RoundToInt(Position.X / kVoxelScale), 0, Size);
-	const int32 vy = FMath::Clamp(FMath::RoundToInt(Position.Y / kVoxelScale), 0, Size);
+	const int32 vx = FMath::Clamp(FMath::RoundToInt(Position.X / VoxelSize), 0, Size);
+	const int32 vy = FMath::Clamp(FMath::RoundToInt(Position.Y / VoxelSize), 0, Size);
 	const int32 NIdx = vx + vy * Dim;
 
 	float NoiseTemp = 0.5f;
@@ -1119,7 +1194,7 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 	const float NormalizedAltitude = FMath::Clamp((VoxelHeight - SeaLevel) / Denom, 0.0f, 1.0f);
 
 	const float LatitudePeriod = 2000.0f;
-	const float WorldVoxelY = BiomeOriginYVoxel + Position.Y / kVoxelScale * (float)NodeScale;
+	const float WorldVoxelY = BiomeOriginYVoxel + Position.Y / VoxelSize * (float)NodeScale;
 	const float LatitudeClimate = 0.5f + 0.5f * FMath::Sin(WorldVoxelY * (2.0f * PI / LatitudePeriod));
 
 	float Temperature = NoiseTemp * 0.8f + LatitudeClimate * 0.2f;
@@ -1147,7 +1222,7 @@ FColor AGenerateSurface::GetVertexColor(FVector Position, FVector Normal) const
 	}
 
 	const float SurfaceVox = SurfaceHeightVoxel.IsValidIndex(NIdx) ? SurfaceHeightVoxel[NIdx] : 0.f;
-	if (Position.Z / kVoxelScale < SurfaceVox - 2.0f)
+	if (Position.Z / VoxelSize < SurfaceVox - 2.0f)
 	{
 		return FColor(82, 70, 55);
 	}
@@ -1240,8 +1315,8 @@ void AGenerateSurface::ModifyVoxelData(FVector Position)
 FBox AGenerateSurface::GetWorldAABB() const
 {
 	const FVector Origin = GetActorLocation();
-	const float WorldSize = Size * kVoxelScale;
-	const float WorldSizeZ = (Size + UndergroundDepth) * kVoxelScale;
+	const float WorldSize = Size * VoxelSize;
+	const float WorldSizeZ = (Size + UndergroundDepth) * VoxelSize;
 	return FBox(Origin, Origin + FVector(WorldSize, WorldSize, WorldSizeZ));
 }
 
@@ -1253,8 +1328,8 @@ void AGenerateSurface::CarveCaveSphere(const FVector& WorldCenter, float WorldRa
 
 void AGenerateSurface::CarveSphereImpl(const FVector& ChunkOrigin, const FVector& WorldCenter, float WorldRadius, bool bDistorted, float MinRoofVoxels, bool bMarkDirty)
 {
-	const FVector LocalCenter = (WorldCenter - ChunkOrigin) / kVoxelScale;
-	const float LocalRadius = WorldRadius / kVoxelScale;
+	const FVector LocalCenter = (WorldCenter - ChunkOrigin) / VoxelSize;
+	const float LocalRadius = WorldRadius / VoxelSize;
 	const float Padding = bDistorted ? 5.f : 1.f;
 	const float OuterRadius = LocalRadius + Padding;
 	const float R2 = LocalRadius * LocalRadius;
@@ -1311,6 +1386,7 @@ void AGenerateSurface::SetChunkCollisionEnabled(bool bEnable)
 	{
 		bGenerating = true;
 		PendingUploadIdx = 0;
+		SetActorTickEnabled(true);
 	}
 	else
 	{
@@ -1347,6 +1423,23 @@ void AGenerateSurface::EndEditStroke()
 {
 	bInEditStroke = false;
 	bDirtyDuringStroke = false;
+
+	if (FlushFuture.IsValid())
+	{
+		FlushFuture.Wait();
+		FlushFuture = TFuture<void>();
+		if (FlushUploadIdx < 0) FlushUploadIdx = 0;
+	}
+	if (FlushUploadIdx >= 0)
+	{
+		const int32 FN = FlushIndices.Num();
+		while (FlushUploadIdx < FN)
+		{
+			UploadSubChunk(FlushIndices[FlushUploadIdx], FlushBuilds[FlushUploadIdx]);
+			++FlushUploadIdx;
+		}
+		FlushUploadIdx = -1;
+	}
 
 	if (CollisionPendingSubChunks.Num() == 0) return;
 
@@ -1410,11 +1503,11 @@ float AGenerateSurface::SampleDensityTrilinear(float lx, float ly, float lz) con
 
 bool AGenerateSurface::TraceDensityField(const FVector& WorldStart, const FVector& WorldDir, float MaxDist, FVector& OutHitPoint, FVector& OutNormal) const
 {
-	const FVector LocalStart = (WorldStart - GetActorLocation()) / kVoxelScale;
+	const FVector LocalStart = (WorldStart - GetActorLocation()) / VoxelSize;
 	const FVector LocalDir = WorldDir.GetSafeNormal();
 
 	const float StepGrid = 0.5f;
-	const float LocalMaxDist = MaxDist / kVoxelScale;
+	const float LocalMaxDist = MaxDist / VoxelSize;
 
 	const float BoxMin = 0.f;
 	const float BoxMax = (float)Size;
@@ -1455,7 +1548,7 @@ bool AGenerateSurface::TraceDensityField(const FVector& WorldStart, const FVecto
 			const float denom = PrevD - D;
 			const float t = FMath::IsNearlyZero(denom) ? 0.5f : PrevD / denom;
 			const FVector HitL = FMath::Lerp(PrevL, L, t);
-			OutHitPoint = GetActorLocation() + HitL * kVoxelScale;
+			OutHitPoint = GetActorLocation() + HitL * VoxelSize;
 
 			const float h = 0.5f;
 			OutNormal = FVector(
@@ -1478,8 +1571,8 @@ void AGenerateSurface::ApplyBrush(const FVector& WorldCenter, float Radius, floa
 		OriginalVoxels = Voxels;
 	}
 
-	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / kVoxelScale;
-	const float LocalRadius = Radius / kVoxelScale;
+	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / VoxelSize;
+	const float LocalRadius = Radius / VoxelSize;
 	const float R2 = LocalRadius * LocalRadius;
 	const float InvR = 1.f / FMath::Max(LocalRadius, KINDA_SMALL_NUMBER);
 
@@ -1515,9 +1608,9 @@ void AGenerateSurface::ApplyFlatten(const FVector& WorldCenter, float Radius, fl
 		OriginalVoxels = Voxels;
 	}
 
-	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / kVoxelScale;
-	const float LocalTargetZ = (TargetWorldZ - GetActorLocation().Z) / kVoxelScale;
-	const float LocalRadius = Radius / kVoxelScale;
+	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / VoxelSize;
+	const float LocalTargetZ = (TargetWorldZ - GetActorLocation().Z) / VoxelSize;
+	const float LocalRadius = Radius / VoxelSize;
 	const float R2 = LocalRadius * LocalRadius;
 	const float InvR = 1.f / FMath::Max(LocalRadius, KINDA_SMALL_NUMBER);
 
@@ -1553,8 +1646,8 @@ void AGenerateSurface::ApplySmooth(const FVector& WorldCenter, float Radius, flo
 		OriginalVoxels = Voxels;
 	}
 
-	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / kVoxelScale;
-	const float LocalRadius = Radius / kVoxelScale;
+	const FVector LocalCenter = (WorldCenter - GetActorLocation()) / VoxelSize;
+	const float LocalRadius = Radius / VoxelSize;
 	const float R2 = LocalRadius * LocalRadius;
 	const float InvR = 1.f / FMath::Max(LocalRadius, KINDA_SMALL_NUMBER);
 

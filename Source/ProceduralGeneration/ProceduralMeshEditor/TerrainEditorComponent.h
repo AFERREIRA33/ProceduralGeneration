@@ -51,7 +51,10 @@ public:
 	float BrushStrengthStep = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Trace")
-	float MaxTraceDistance = 20000.f;
+	float MaxTraceDistance = 12000.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|Trace", meta=(ClampMin="1"))
+	int32 MaxTraceProbes = 10;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Brush|State")
 	bool bStartActive = false;

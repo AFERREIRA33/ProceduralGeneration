@@ -148,6 +148,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
 	int MaxChunksPerFrame = 1;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
+	int InitialFillChunksPerFrame = 8;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
+	int StreamRecomputeEveryNFrames = 3;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
 	bool bChunkCollision = true;
 
@@ -235,7 +241,8 @@ private:
 	float SampleSurfaceWorldZ(float WorldX, float WorldY);
 	int32 NaturalScale(const FVector& Point, const FVector& PlayerLoc);
 	int32 ComputeNodeTransitionMask(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc);
-	AGenerateSurface* SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, bool bWantCollision);
+	int32 ComputeNodeFinerMask(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, const FVector& PlayerLoc);
+	AGenerateSurface* SpawnNodeChunk(int32 CellX, int32 CellY, int32 CellZ, int32 NodeScale, int32 TransMask, int32 FinerMask, bool bWantCollision);
 
 	void CaptureChunkEdits(const FIntPoint& Key, AGenerateSurface* Chunk);
 	void CaptureChunkEdits(const FOctreeNodeKey& Key, AGenerateSurface* Chunk);
@@ -257,5 +264,10 @@ private:
 
 	float StreamSurfaceZ = 0.0f;
 	bool bStreamAnchored = false;
+	bool bInitialFillDone = false;
+	int32 StreamRecomputeCounter = 0;
+	TArray<FOctreeNodeKey> CachedDesired;
+	TArray<FOctreeNodeKey> CachedMissing;
+	TArray<float> CachedMissingDist;
 	FIntPoint CurrentCenterChunk = FIntPoint::ZeroValue;
 };
