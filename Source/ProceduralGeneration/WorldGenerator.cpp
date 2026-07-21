@@ -14,6 +14,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "DrawDebugHelpers.h"
 
 
 // Sets default values
@@ -21,6 +22,9 @@ AWorldGenerator::AWorldGenerator()
 {
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+#if WITH_EDITOR
+	SetIsSpatiallyLoaded(false);
+#endif
 }
 
 // Called when the game starts or when spawned
@@ -305,7 +309,7 @@ bool AWorldGenerator::NodeIntersectsSurface(int32 CellX, int32 CellY, int32 Cell
 int32 AWorldGenerator::NaturalScale(const FVector& Point, const FVector& PlayerLoc)
 {
 	const float BaseChunk = Size * 100.0f;
-	const float d = FVector::Dist(Point, PlayerLoc);
+	const float d = FVector::Dist2D(Point, PlayerLoc);
 	const int32 MaxScale = 1 << FMath::Clamp(MaxLOD, 0, 5);
 	const float ratio = d / (OctreeSubdivFactor * BaseChunk);
 	int32 sc = 1;
@@ -363,8 +367,7 @@ void AWorldGenerator::SubdivideOctree(int32 CellX, int32 CellY, int32 CellZ, int
 		const float cz = ((float)CellZ + (float)NodeScale * 0.5f) * BaseChunk;
 		const float dx = PlayerLoc.X - cx;
 		const float dy = PlayerLoc.Y - cy;
-		const float dz = PlayerLoc.Z - cz;
-		const float Dist = FMath::Sqrt(dx * dx + dy * dy + dz * dz);
+		const float Dist = FMath::Sqrt(dx * dx + dy * dy);
 		bool bSubdivide = (Dist < NodeWorld * OctreeSubdivFactor);
 		if (!bSubdivide)
 		{
@@ -460,6 +463,7 @@ void AWorldGenerator::UpdateStreamingOctree()
 	if (CachedDesired.Num() == 0 || ++StreamRecomputeCounter >= FMath::Max(1, StreamRecomputeEveryNFrames))
 	{
 		StreamRecomputeCounter = 0;
+		CachedDesired.Reset();
 		CollectOctreeLeaves(PlayerLocation, CachedDesired);
 		bRecomputed = true;
 	}
@@ -506,7 +510,7 @@ void AWorldGenerator::UpdateStreamingOctree()
 		}
 	}
 
-	const int Budget = bInitialFillDone ? FMath::Max(1, MaxChunksPerFrame) : FMath::Max(1, InitialFillChunksPerFrame);
+	const int Budget = FMath::Clamp(CachedMissing.Num() / 8, FMath::Max(1, MaxChunksPerFrame), FMath::Max(1, InitialFillChunksPerFrame));
 	int Spawned = 0;
 	while (Spawned < Budget && CachedMissing.Num() > 0)
 	{
@@ -529,8 +533,6 @@ void AWorldGenerator::UpdateStreamingOctree()
 		++Spawned;
 	}
 
-	if (!bInitialFillDone && CachedMissing.Num() == 0) bInitialFillDone = true;
-
 	if (bChunkCollision)
 	{
 		const float CollRadius = OctreeCollisionRadiusChunks * BaseChunk;
@@ -547,6 +549,29 @@ void AWorldGenerator::UpdateStreamingOctree()
 				Chunk->SetChunkCollisionEnabled(true);
 			}
 		}
+	}
+
+	if (bDebugDrawOctree)
+	{
+		for (const TPair<FOctreeNodeKey, TObjectPtr<AGenerateSurface>>& Pair : OctreeChunks)
+		{
+			const float Half = (float)Pair.Key.S * BaseChunk * 0.5f;
+			const FVector Center(
+				((float)Pair.Key.X + (float)Pair.Key.S * 0.5f) * BaseChunk,
+				((float)Pair.Key.Y + (float)Pair.Key.S * 0.5f) * BaseChunk,
+				((float)Pair.Key.Z + (float)Pair.Key.S * 0.5f) * BaseChunk);
+			FColor C;
+			switch (Pair.Key.S)
+			{
+			case 1: C = FColor::Green; break;
+			case 2: C = FColor::Yellow; break;
+			case 4: C = FColor::Orange; break;
+			case 8: C = FColor::Red; break;
+			default: C = FColor::Purple; break;
+			}
+			DrawDebugBox(GetWorld(), Center, FVector(Half * 0.98f), C, false, -1.f, 0, 40.f);
+		}
+		DrawDebugLine(GetWorld(), PlayerLocation - FVector(0, 0, 800.f), PlayerLocation - FVector(0, 0, 100000.f), FColor::Cyan, false, -1.f, 0, 8.f);
 	}
 }
 

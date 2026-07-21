@@ -1,5 +1,5 @@
 ﻿#include "GenerateSurface.h"
-#include"ProceduralGeneration/Utils/FastNoiseLite.h"
+#include "ProceduralGeneration/Utils/FastNoiseLite.h"
 #include "ProceduralMeshComponent.h"
 #include "Async/ParallelFor.h"
 #include "Async/Async.h"
@@ -52,18 +52,12 @@ void AGenerateSurface::StartGeneration()
 	GenerationType = SetGenerationType();
 	Setup();
 
-	const double T0 = FPlatformTime::Seconds();
 	Generate2DHeightMap(GetActorLocation() / kBaseVoxel);
-	const double T1 = FPlatformTime::Seconds();
 
 	if (Material) Mesh->SetMaterial(0, Material);
 
 	BuildSubChunks();
 	RebuildAllSubChunks();
-	const double T2 = FPlatformTime::Seconds();
-
-	UE_LOG(LogTemp, Display, TEXT("[PERF CHUNK] voxels=%.2fms mesh=%.2fms total=%.2fms collision=%d"),
-		(T1 - T0) * 1000.0, (T2 - T1) * 1000.0, (T2 - T0) * 1000.0, bCollisionEnabled ? 1 : 0);
 }
 
 void AGenerateSurface::SetPendingCaveData(TArray<FCaveCarveOp>&& Ops, float MinRoof)
@@ -677,9 +671,13 @@ void AGenerateSurface::BuildSubChunkDataTransvoxel(int32 Idx, FSubChunkBuildData
 
 		for (int32 ti = 0; ti < TriCount * 3; ti += 3)
 		{
-			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 0]]);
-			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 2]]);
-			Out.Triangles.Add(LocalVtx[Cell.vertexIndex[ti + 1]]);
+			const int32 v0 = LocalVtx[Cell.vertexIndex[ti + 0]];
+			const int32 v2 = LocalVtx[Cell.vertexIndex[ti + 2]];
+			const int32 v1 = LocalVtx[Cell.vertexIndex[ti + 1]];
+			if (v0 == v1 || v1 == v2 || v0 == v2) continue;
+			Out.Triangles.Add(v0);
+			Out.Triangles.Add(v2);
+			Out.Triangles.Add(v1);
 		}
 	}
 
@@ -804,6 +802,7 @@ void AGenerateSurface::BuildTransitionFace(const FSubChunk& Info, int32 FaceDir,
 			const int32 i0 = LocalVtx[Cell.vertexIndex[ti + 0]];
 			const int32 i1 = LocalVtx[Cell.vertexIndex[ti + 1]];
 			const int32 i2 = LocalVtx[Cell.vertexIndex[ti + 2]];
+			if (i0 == i1 || i1 == i2 || i0 == i2) continue;
 			const FVector GeoN = FVector::CrossProduct(Out.Vertices[i1] - Out.Vertices[i0], Out.Vertices[i2] - Out.Vertices[i0]);
 			const FVector AvgN = Out.Normals[i0] + Out.Normals[i1] + Out.Normals[i2];
 			Out.Triangles.Add(i0);
@@ -980,7 +979,6 @@ float AGenerateSurface::SampleThNodeLocal(float LocalVoxX, float LocalVoxY) cons
 
 void AGenerateSurface::Generate2DHeightMap(FVector Position)
 {
-	UE_LOG(LogTemp, Verbose, TEXT("Generating 2D Height Map at Position: %f, %f, %f"), Position.X, Position.Y, Position.Z);
 	const int Dim = Size + 1;
 	const int DimZ = SizeZ + 1;
 	Voxels.SetNumUninitialized(Dim * Dim * DimZ);
@@ -1023,19 +1021,6 @@ void AGenerateSurface::Generate2DHeightMap(FVector Position)
 			}
 		}
 	});
-
-	float TMin = FLT_MAX, TMax = -FLT_MAX, TSum = 0.f;
-	float HMin = FLT_MAX, HMax = -FLT_MAX, HSum = 0.f;
-	const int32 Count = Dim * Dim;
-	for (int32 i = 0; i < Count; ++i)
-	{
-		const float Tv = TemperatureNoiseValues[i] * 0.5f + 0.5f;
-		const float Hv = HumidityNoiseValues[i] * 0.5f + 0.5f;
-		TMin = FMath::Min(TMin, Tv); TMax = FMath::Max(TMax, Tv); TSum += Tv;
-		HMin = FMath::Min(HMin, Hv); HMax = FMath::Max(HMax, Hv); HSum += Hv;
-	}
-	UE_LOG(LogTemp, Verbose, TEXT("[BIOME] Temp [%.3f..%.3f] avg %.3f | Humid [%.3f..%.3f] avg %.3f | freq=%.4f chunk(%.0f,%.0f)"),
-		TMin, TMax, TSum / Count, HMin, HMax, HSum / Count, BiomeFrequency, PX, PY);
 }
 
 ProceduralGenerationType AGenerateSurface::SetGenerationType()

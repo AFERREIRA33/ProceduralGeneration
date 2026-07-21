@@ -145,10 +145,6 @@ public:
 
 	void GenerateCaveSystem();
 
-	void BuildCarvePlan(const FBox& TerrainAABB);
-	void CarveChunk(AGenerateSurface* Chunk) const;
-	bool IsCarvePlanReady() const { return bCarvePlanReady; }
-
 	TArray<FCaveCarveOp> GetTileOps(const FBox& ChunkAABB, float FloorOverrideZ = 3.4e38f, float BandTopVoxelsOverride = -1.0f);
 	float GetCaveMinRoofDepth() const { return CaveMinRoofDepth; }
 
@@ -171,10 +167,7 @@ private:
 
 	void CarveCaveInTerrains(const FVector& WorldCenter, float WorldRadius, bool bDistorted);
 
-	TArray<FCaveCarveOp> CaveCarvePlan;
 	TMap<FIntPoint, TArray<FCaveCarveOp>> CavePlansByTile;
-	bool bCarvePlanReady = false;
-	bool bBuildingPlan = false;
 
 	bool bCaveGenInProgress = false;
 	FVector CaveOrigin = FVector::ZeroVector;

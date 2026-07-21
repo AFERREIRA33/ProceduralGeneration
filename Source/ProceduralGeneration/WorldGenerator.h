@@ -125,9 +125,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface|Water")
 	float RiverMaxTerrain = 40.0f;
 
-	UPROPERTY(editAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int SurfaceLevel = 0;
-	UPROPERTY(editAnywhere, BlueprintReadWrite, Category="Chunk")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk")
 	int MapRange = 10;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
@@ -153,6 +153,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming", meta=(ClampMin="1"))
 	int StreamRecomputeEveryNFrames = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Streaming")
+	bool bDebugDrawOctree = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Perf")
 	bool bChunkCollision = true;
@@ -221,9 +224,6 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	FastNoiseLite* Noise;
 private:
-	// TQueue<AChunkBase*> chunkQueue;
-	// TArray<AChunkBase*> chunks;
-	//AChunkBase* actualChunk;
 	
 	void GenerateWorld();
 
@@ -264,7 +264,6 @@ private:
 
 	float StreamSurfaceZ = 0.0f;
 	bool bStreamAnchored = false;
-	bool bInitialFillDone = false;
 	int32 StreamRecomputeCounter = 0;
 	TArray<FOctreeNodeKey> CachedDesired;
 	TArray<FOctreeNodeKey> CachedMissing;

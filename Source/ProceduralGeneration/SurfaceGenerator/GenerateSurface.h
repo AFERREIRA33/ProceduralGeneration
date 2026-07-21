@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include  "ProceduralMeshComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "ProceduralGeneration/Chunk/ChunkBase.h"
 #include "ProceduralGeneration/CaveGeneration/CaveCarveOp.h"
 #include "Async/Future.h"
@@ -16,7 +16,7 @@ class PROCEDURALGENERATION_API AGenerateSurface : public AChunkBase
 
 public:
 	
-	UPROPERTY(editAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int SurfaceLevel = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Surface", meta=(ClampMin="0.0", UIMin="0.0"))
@@ -260,10 +260,6 @@ private:
 	TUniquePtr<FastNoiseLite> ContinentNoise;
 	TUniquePtr<FastNoiseLite> RiverNoise;
 
-	int TriangleOrder[3] = {0, 1, 2};
-	float Min = 0;
-	float Max = 0;
-
 	const int VertexOffset[8][3] = {
 		{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
 		{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}
@@ -273,12 +269,6 @@ private:
 		{0, 1}, {1, 2}, {2, 3}, {3, 0},
 		{4, 5}, {5, 6}, {6, 7}, {7, 4},
 		{0, 4}, {1, 5}, {2, 6}, {3, 7}
-	};
-
-	const float EdgeDirection[12][3] = {
-		{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f},
-		{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f},
-		{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}
 	};
 
 	const int CubeEdgeFlags[256]={

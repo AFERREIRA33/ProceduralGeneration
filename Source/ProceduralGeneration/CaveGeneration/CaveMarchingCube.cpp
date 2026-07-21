@@ -8,6 +8,9 @@
 ACaveMarchingCube::ACaveMarchingCube()
 {
 	PrimaryActorTick.bCanEverTick = true;
+#if WITH_EDITOR
+	SetIsSpatiallyLoaded(false);
+#endif
 	mesh = CreateDefaultSubobject<UProceduralMeshComponent>("Mesh");
 	SetRootComponent(mesh);
 	mesh->SetCanEverAffectNavigation(false);
@@ -57,13 +60,6 @@ void ACaveMarchingCube::Tick(float DeltaTime)
 
 void ACaveMarchingCube::CarveCaveInTerrains(const FVector& WorldCenter, float WorldRadius, bool bDistorted)
 {
-	if (bBuildingPlan)
-	{
-		CaveCarvePlan.Add({ WorldCenter, WorldRadius, bDistorted, CaveMinRoofDepth });
-		CaveCarveCallsTotal++;
-		return;
-	}
-
 	CaveCarveCallsTotal++;
 	const FBox BrushBox(WorldCenter - FVector(WorldRadius + 500.f), WorldCenter + FVector(WorldRadius + 500.f));
 	for (int32 t = 0; t < CaveTerrains.Num(); ++t)
@@ -186,37 +182,6 @@ bool ACaveMarchingCube::PlaceSeedsAndStart()
 
 	bCaveGenInProgress = true;
 	return true;
-}
-
-void ACaveMarchingCube::BuildCarvePlan(const FBox& TerrainAABB)
-{
-	CaveCarvePlan.Reset();
-	bCarvePlanReady = false;
-	bBuildingPlan = true;
-
-	noise->SetFrequency(wormNoiseFrequency);
-	CaveWorldVoxelScale = voxelSize;
-
-	const FVector AggCenter = TerrainAABB.GetCenter();
-	const float SpawnZ = FMath::Lerp(TerrainAABB.Max.Z, TerrainAABB.Min.Z, FMath::Clamp(MotherSpawnDepthRatio, 0.0f, 1.0f));
-	const FVector MotherWorldStart(AggCenter.X, AggCenter.Y, SpawnZ);
-	CaveOrigin = MotherWorldStart - FVector(WormGlobalSize / 2, WormGlobalSize / 2, WormGlobalSize / 2) * CaveWorldVoxelScale;
-
-	if (!PlaceSeedsAndStart())
-	{
-		bBuildingPlan = false;
-		return;
-	}
-
-	int32 SafetyIterations = 100000;
-	while (bCaveGenInProgress && SafetyIterations-- > 0)
-	{
-		StepCaveGeneration();
-	}
-
-	bBuildingPlan = false;
-	bCarvePlanReady = true;
-	UE_LOG(LogTemp, Log, TEXT("[CAVE] Carve plan built: %d sphere ops, origin=%s"), CaveCarvePlan.Num(), *CaveOrigin.ToString());
 }
 
 int32 ACaveMarchingCube::GetTileSeed(const FIntPoint& Tile) const
@@ -405,22 +370,6 @@ void ACaveMarchingCube::BuildTileCarveOps(const FIntPoint& Tile, float FloorWorl
 	}
 }
 
-void ACaveMarchingCube::CarveChunk(AGenerateSurface* Chunk) const
-{
-	if (!Chunk || !bCarvePlanReady) return;
-
-	const FBox ChunkAABB = Chunk->GetWorldAABB();
-	for (const FCaveCarveOp& Op : CaveCarvePlan)
-	{
-		const float Reach = Op.WorldRadius + (Op.bDistorted ? 500.f : 100.f);
-		const FBox OpBox(Op.WorldCenter - FVector(Reach), Op.WorldCenter + FVector(Reach));
-		if (ChunkAABB.Intersect(OpBox))
-		{
-			Chunk->CarveCaveSphere(Op.WorldCenter, Op.WorldRadius, Op.bDistorted, CaveMinRoofDepth);
-		}
-	}
-}
-
 void ACaveMarchingCube::StepCaveGeneration()
 {
 	int32 Budget = FMath::Max(1, CaveStepsPerFrame);
@@ -460,7 +409,6 @@ void ACaveMarchingCube::StepCaveGeneration()
 				Worm.Position.Y <= 2 || Worm.Position.Y >= WormGlobalSize - 2 ||
 				Worm.Position.Z <= 2)
 			{
-				UE_LOG(LogTemp, Verbose, TEXT("[CAVE] Worm %d died at LocalPos=%s (out of bounds), maxHorizReach=%.1f"), i, *Worm.Position.ToString(), i < CaveWormHorizReach.Num() ? CaveWormHorizReach[i] : -1.f);
 				if (i < CaveWormHorizReach.Num() && CaveWormHorizReach[i] > 8.f) CaveWormsThatTraveledHoriz++;
 				CaveActiveWorms.RemoveAt(i);
 				if (i < CaveSpawnPositions.Num()) CaveSpawnPositions.RemoveAt(i);
@@ -495,7 +443,6 @@ void ACaveMarchingCube::StepCaveGeneration()
 			Worm.RemainingSteps--;
 			if (Worm.RemainingSteps <= 0)
 			{
-				UE_LOG(LogTemp, Verbose, TEXT("[CAVE] Worm %d died of old age, maxHorizReach=%.1f"), i, i < CaveWormHorizReach.Num() ? CaveWormHorizReach[i] : -1.f);
 				if (i < CaveWormHorizReach.Num() && CaveWormHorizReach[i] > 8.f) CaveWormsThatTraveledHoriz++;
 				CaveActiveWorms.RemoveAt(i);
 				if (i < CaveSpawnPositions.Num()) CaveSpawnPositions.RemoveAt(i);
